@@ -3,6 +3,7 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import type { Hud } from './hud.ts';
 import type { Input } from './input.ts';
 import type { Sfx } from './audio.ts';
+import type { NetSession } from '../net/session.ts';
 
 export interface GameContext {
   R: typeof RAPIER;
@@ -10,6 +11,8 @@ export interface GameContext {
   hud: Hud;
   input: Input;
   sfx: Sfx;
+  /** Online room session (idle until the player creates/joins a room). */
+  net: NetSession;
   /** Ask the host to restart / swap games. */
   requestRestart(): void;
 }

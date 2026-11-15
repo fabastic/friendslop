@@ -6,6 +6,7 @@ import { Sfx } from './core/audio.ts';
 import { registerGame, registry, type GameContext, type Minigame } from './core/minigame.ts';
 import { Bowling, BOWLING_ASSETS } from './games/bowling/bowling.ts';
 import { preloadAssets } from './core/assets.ts';
+import { NetSession } from './net/session.ts';
 
 registerGame('bowling', 'Jelly Bowl', () => new Bowling());
 
@@ -39,6 +40,7 @@ async function boot(): Promise<void> {
     hud,
     input,
     sfx,
+    net: new NetSession(),
     requestRestart: () => queueMicrotask(() => load(currentId)),
   };
 
