@@ -42,11 +42,26 @@ export interface PlayerConfig {
   color: string;
 }
 
+/** Free-roam state for online party play (everyone but the current bowler roams). */
+interface RoamState {
+  x: number;
+  z: number;
+  ry: number;
+  y: number;
+  vy: number;
+}
+
 interface Player extends PlayerConfig {
   rolls: number[];
   char: JellyFolk;
   seat: THREE.Vector3;
   react: number;
+  /** online: roam target (sent over the wire), smoothed display state, and blocker body */
+  roam?: RoamState;
+  disp?: RoamState;
+  body?: RAPIER.RigidBody;
+  /** last aim state received from this player while they were the bowler */
+  netAim?: { x: number; aim: number; spin: number; skin: number };
 }
 
 export interface ThrowParams {
