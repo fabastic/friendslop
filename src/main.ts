@@ -6,10 +6,12 @@ import { Sfx } from './core/audio.ts';
 import { registerGame, registry, type GameContext, type Minigame } from './core/minigame.ts';
 import { Bowling, BOWLING_ASSETS, presetLineup } from './games/bowling/bowling.ts';
 import { Hub } from './hub/hub.ts';
+import { Peak } from './games/peak/peak.ts';
 import { preloadAssets } from './core/assets.ts';
 import { NetSession } from './net/session.ts';
 
 registerGame('bowling', 'Jelly Bowl', () => new Bowling());
+registerGame('peak', 'Jelly Peak', () => new Peak());
 
 async function boot(): Promise<void> {
   await Promise.all([RAPIER.init(), preloadAssets(BOWLING_ASSETS)]);

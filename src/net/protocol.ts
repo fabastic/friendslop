@@ -43,8 +43,14 @@ export type NetMsg =
   | { t: 'lobby'; players: LobbyPlayer[]; running: boolean; chat: ChatLine[] }
   /** guest → host: introduce / update my profile. */
   | { t: 'hello'; name: string; species: string; color: string }
-  /** host → everyone: begin the game with this line-up (seat order). */
-  | { t: 'start'; configs: StartConfig[] }
+  /** host → everyone: begin the game with this line-up (seat order). `game` = registry id. */
+  | { t: 'start'; configs: StartConfig[]; game?: string }
+  /** Jelly Peak: climber position/state (10 Hz). */
+  | { t: 'peak'; pid: string; x: number; y: number; z: number; ry: number; s: string; best: number }
+  /** Jelly Peak: someone gave `to` a leg-up. */
+  | { t: 'peakBoost'; pid: string; to: string }
+  /** Jelly Peak: reached the summit after `time` seconds. */
+  | { t: 'peakDone'; pid: string; time: number }
   | ThrowMsg
   /** bowler → everyone: authoritative pin outcome of their roll. */
   | { t: 'roll'; seat: number; mask: number; pid?: string }

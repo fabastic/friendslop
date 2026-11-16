@@ -1,0 +1,42 @@
+/* ================= Jelly Peak HUD ================= */
+.pk-hud { position: fixed; inset: 0; pointer-events: none; font-family: 'Fredoka', system-ui, sans-serif; color: var(--ink); }
+.pk-top { position: absolute; top: 14px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; align-items: center; background: var(--white); border: 3px solid var(--ink); border-radius: 999px; padding: 6px 8px 6px 16px; box-shadow: 0 4px 0 var(--ink); font-weight: 700; white-space: nowrap; }
+.pk-height { font-size: 18px; color: var(--pink); }
+.pk-timer { font-size: 15px; font-variant-numeric: tabular-nums; background: #fff3c4; border-radius: 999px; padding: 2px 10px; }
+.pk-pause { pointer-events: auto; width: 32px; height: 32px; border-radius: 50%; border: 2px solid var(--ink); background: var(--yellow); display: flex; gap: 4px; align-items: center; justify-content: center; cursor: pointer; }
+.pk-pause i { display: block; width: 4px; height: 13px; border-radius: 2px; background: var(--ink); }
+.pk-stam { position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%); display: flex; gap: 8px; align-items: center; opacity: .35; transition: opacity .3s; }
+.pk-stam.active { opacity: 1; }
+.pk-stam span { font-size: 22px; }
+.pk-stam-bar { width: min(260px, 60vw); height: 16px; border: 3px solid var(--ink); border-radius: 999px; background: #fff; overflow: hidden; }
+.pk-stam-fill { height: 100%; background: linear-gradient(90deg, #8be36b, #ffd23f); border-radius: 999px; transition: width .08s linear; }
+.pk-stam-bar.low .pk-stam-fill { background: #ff5a4f; animation: pkBlink .4s steps(2) infinite; }
+.pk-stam-bar.flash { animation: pkFlash .5s; }
+@keyframes pkBlink { 50% { opacity: .4; } }
+@keyframes pkFlash { 40% { transform: scale(1.12); box-shadow: 0 0 0 6px rgba(139, 227, 107, .5); } }
+.pk-team { position: absolute; top: 72px; left: 14px; display: flex; flex-direction: column; gap: 5px; width: 190px; }
+.pk-row { position: relative; display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 12px; background: rgba(255, 250, 242, .9); border: 2px solid var(--ink); font-size: 13px; font-weight: 700; overflow: hidden; }
+.pk-row.me { box-shadow: 0 0 0 2px var(--pc); }
+.pk-row span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; z-index: 1; }
+.pk-row b { z-index: 1; }
+.pk-row i { position: absolute; left: 0; top: 0; bottom: 0; background: color-mix(in srgb, var(--pc) 30%, transparent); transition: width .4s; }
+.pk-name { position: fixed; left: 0; top: 0; padding: 2px 8px; border-radius: 999px; background: var(--white); border: 2px solid var(--pc, var(--ink)); font-size: 12px; font-weight: 700; white-space: nowrap; will-change: transform; }
+.pk-name.me { display: none !important; }
+.pk-hint { position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%); max-width: calc(100vw - 32px); text-align: center; background: rgba(42, 27, 74, .8); color: var(--white); padding: 8px 16px; border-radius: 999px; font-size: 14px; transition: opacity .6s; }
+.pk-hint.fade { opacity: 0; }
+.pk-board { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(42, 27, 74, .35); pointer-events: auto; animation: pkFade .3s both; }
+@keyframes pkFade { from { opacity: 0; } }
+.pk-card { width: min(380px, calc(100vw - 32px)); background: var(--white); border: 3px solid var(--ink); border-radius: 26px; box-shadow: 0 8px 0 var(--ink); padding: 20px; animation: pkPop .45s cubic-bezier(.3, 1.6, .5, 1) both; }
+@keyframes pkPop { from { transform: scale(.7) translateY(30px); opacity: 0; } }
+.pk-card h2 { margin: 0 0 12px; text-align: center; color: var(--pink); -webkit-text-stroke: 1px var(--ink); font-size: 28px; }
+.pk-card ol { list-style: none; margin: 0 0 14px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pk-card li { display: flex; gap: 10px; align-items: center; padding: 8px 12px; border-radius: 14px; background: color-mix(in srgb, var(--pc) 16%, white); font-weight: 700; }
+.pk-card li b { flex: 1; }
+.pk-card li em { font-style: normal; font-variant-numeric: tabular-nums; opacity: .75; }
+.pk-muted { text-align: center; opacity: .65; margin: -4px 0 12px; }
+.pk-actions { display: flex; gap: 8px; }
+.pk-actions.col { flex-direction: column; }
+.pk-btn { flex: 1; font: inherit; font-weight: 700; padding: 10px; border: 3px solid var(--ink); border-radius: 14px; background: var(--yellow); color: var(--ink); box-shadow: 0 3px 0 var(--ink); cursor: pointer; }
+.pk-btn.primary { background: var(--pink); color: #fff; }
+.pk-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink); }
+@media (max-width: 600px) { .pk-team { width: 140px; top: 70px; } .pk-top { font-size: 14px; } }

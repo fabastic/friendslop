@@ -26,7 +26,7 @@ export interface GameCard {
 /** Shelf. Upcoming ideas follow what's trending in co-op "friendslop" & party games. */
 export const GAMES: GameCard[] = [
   { id: 'bowling', title: 'Jelly Bowl', blurb: 'Bouncy ten-pin with splits, turkeys and very dramatic pins.', emoji: '🎳', tint: '#ff5fa2', players: '1–4', ready: true, tag: 'Play now' },
-  { id: 'peak', title: 'Jelly Peak', blurb: 'Co-op climb: grab hands, share stamina, don\'t look down.', emoji: '🏔️', tint: '#3fd6ff', players: '1–4', ready: false, tag: 'Trending: co-op climb' },
+  { id: 'peak', title: 'Jelly Peak', blurb: 'Co-op climb: cling to the candy pillar, boost your buddies, plant the flag.', emoji: '🏔️', tint: '#3fd6ff', players: '1–4', ready: true, tag: 'New!' },
   { id: 'wobble', title: 'Wobble Run', blurb: 'Obstacle race through spinning jelly hammers. Last bean out.', emoji: '🏁', tint: '#ffd23f', players: '2–8', ready: false, tag: 'Obstacle race' },
   { id: 'haul', title: 'Spooky Haul', blurb: 'Sneak loot out of a haunted candy factory. Physics will betray you.', emoji: '👻', tint: '#7b4dff', players: '2–6', ready: false, tag: 'Trending: co-op loot' },
   { id: 'tennis', title: 'Squish Tennis', blurb: 'Swing, smash and boing — doubles on a trampoline court.', emoji: '🎾', tint: '#3ccf7a', players: '2–4', ready: false, tag: 'Sports' },
@@ -42,7 +42,13 @@ function loadProfile(): Profile {
   } catch {
     /* fallthrough */
   }
-  return { name: 'Jelly ' + Math.floor(100 + Math.random() * 900), species: 'cat', color: JELLY_COLORS[0] };
+  const fresh = { name: 'Jelly ' + Math.floor(100 + Math.random() * 900), species: 'cat', color: JELLY_COLORS[0] };
+  try {
+    localStorage.setItem(KEY_PROFILE, JSON.stringify(fresh)); // games read it for solo play
+  } catch {
+    /* ignore */
+  }
+  return fresh;
 }
 
 export interface HubCallbacks {
@@ -78,7 +84,7 @@ export class Hub {
     this.unsub = session.on((ev) => {
       if (ev.e === 'error') this.toast(ev.text);
       if (ev.e === 'host-lost') this.toast('The party host left 😢');
-      if (ev.e === 'msg' && ev.m.t === 'start' && !session.isHost) this.launch('bowling');
+      if (ev.e === 'msg' && ev.m.t === 'start' && !session.isHost) this.launch(ev.m.game ?? 'bowling');
       // leader went back to the hub: follow them so nobody is stranded in a finished game
       if (ev.e === 'lobby' && !session.isHost && this.sawRunning && !session.gameRunning && this.root.classList.contains('hidden')) {
         this.toast('The leader is back in the hub');
@@ -181,7 +187,7 @@ export class Hub {
         if (!g.ready) return this.toast(`${g.title} is still in the jelly mould 🍮`);
         if (this.session.active && !this.session.isHost) return this.toast('Only the party leader picks the game');
         if (this.session.active) {
-          this.session.send({ t: 'start', configs: this.session.configs() });
+          this.session.send({ t: 'start', configs: this.session.configs(), game: g.id });
           this.session.gameRunning = true;
           this.session.broadcastLobby();
         }

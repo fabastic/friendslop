@@ -239,9 +239,20 @@ export class NetSession {
     });
     peer.on('error', (err: Error & { type?: string }) => {
       if (!this.active) return;
-      if (err?.type === 'peer-unreachable' || err?.type === 'network' || err?.type === 'server-error') {
-        if (this.isHost) this.fail('Lost connection to the signaling server');
-        else this.emit({ e: 'host-lost' });
+      // 'peer-unreachable' fires for *any* dial (mesh dials included), and 'network'/'server-error'
+      // are signalling-server blips. Live data channels survive both, so only give up when the
+      // link that actually matters is gone; otherwise reattach to signalling in the background.
+      if (err?.type === 'network' || err?.type === 'server-error' || err?.type === 'socket-error' || err?.type === 'socket-closed') {
+        window.setTimeout(() => {
+          if (this.peer === peer && peer.disconnected && !peer.destroyed) {
+            try {
+              peer.reconnect();
+            } catch {
+              /* next blip will retry */
+            }
+          }
+        }, 1500);
+        if (!this.isHost && !this.hostConn?.open && this.gotLobby) this.emit({ e: 'host-lost' });
       }
     });
   }
