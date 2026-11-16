@@ -135,7 +135,7 @@ export class Peak implements Minigame {
     lineup.forEach((p, i) => {
       const c = this.makeClimber(p);
       const a = (i - (lineup.length - 1) / 2) * 0.7;
-      const start = this.checkpoint.pos.clone().add(new THREE.Vector3(a, 0, 0.6));
+      const start = this.checkpoint.pos.clone().add(new THREE.Vector3(a, 0, 1.4)); // in front of the mushroom
       c.char.root.position.copy(start);
       if (p.pid === myPid) {
         this.me = c;
@@ -494,13 +494,16 @@ export class Peak implements Minigame {
     r.rotation.y = lerpAngle(r.rotation.y, this.facing, 1 - Math.exp(-dt * 14));
     // waddle when walking
     const speed = Math.hypot(this.vel.x, this.vel.z);
-    if (this.grounded && speed > 0.5) r.position.y += Math.abs(Math.sin(t * 12)) * 0.04;
+    this.me.char.setMove(this.grounded && !this.climbing ? speed : 0);
+    if (this.grounded && speed > 0.5) r.position.y += Math.abs(Math.sin(t * 12)) * 0.02;
     // remote climbers
     for (const o of this.others) {
       const tg = o.target;
       if (!tg) continue;
       const k = 1 - Math.exp(-dt * 12);
       const or = o.char.root;
+      const gap = Math.hypot(tg.x - or.position.x, tg.z - or.position.z);
+      o.char.setMove(tg.s === 'idle' ? Math.min(5, gap * 10) : 0);
       if (or.position.distanceTo(this.tmpV.set(tg.x, tg.y, tg.z)) > 6) or.position.copy(this.tmpV);
       else or.position.lerp(this.tmpV, k);
       or.rotation.y = lerpAngle(or.rotation.y, tg.ry, k);

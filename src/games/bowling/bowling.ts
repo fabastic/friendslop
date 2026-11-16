@@ -631,7 +631,8 @@ export class Bowling implements Minigame {
     }
     // pose: seated on the bench, otherwise a bouncy walk
     const atSeat = Math.hypot(s.x - p.seat.x, s.z - p.seat.z) < 0.08 && s.y === 0;
-    s.bob = moving && s.y === 0 ? Math.abs(Math.sin(t * 11 + i)) * 0.035 : 0;
+    s.bob = moving && s.y === 0 ? Math.abs(Math.sin(t * 11 + i)) * 0.015 : 0;
+    p.char.setMove(moving && s.y === 0 ? 1.4 : 0);
     if (p.react > 0) return;
     const want: CharStateName = atSeat && !moving ? 'sit' : 'idle';
     if (p.char.state !== want) p.char.setState(want);
