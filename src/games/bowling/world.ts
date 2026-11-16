@@ -652,13 +652,19 @@ function starGeometry(r: number, depth: number): THREE.BufferGeometry {
  * Candy shapes and drifting clouds all around the arena. Placement keeps a clear corridor around
  * the lane, both machines, the benches and the camera paths, and nothing overlaps anything else.
  */
-function buildScenery(scene: THREE.Scene): { update(dt: number): void } {
+/**
+ * Abstract candy scenery (shapes, balloons, clouds). `keepClear(x, z, r)` returns true where the
+ * game's play area is, so nothing gets placed there; defaults to the bowling lane.
+ */
+export function buildScenery(
+  scene: THREE.Scene,
+  keepClear: (x: number, z: number, r: number) => boolean = (x, z, r) => x > -2.6 - r && x < 2.0 + r && z > -23 - r && z < 6.5 + r,
+): { update(dt: number): void } {
   const rng = mulberry(11);
   const pick = <T,>(a: T[]) => a[Math.floor(rng() * a.length)];
   const placed: { x: number; z: number; r: number }[] = [];
   const blocked = (x: number, z: number, r: number) => {
-    // lane + machines + approach/bench area, padded by the shape's radius
-    if (x > -2.6 - r && x < 2.0 + r && z > -23 - r && z < 6.5 + r) return true;
+    if (keepClear(x, z, r)) return true;
     return placed.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + r + 0.5);
   };
   const floaters: THREE.Object3D[] = [];
@@ -757,7 +763,13 @@ function buildScenery(scene: THREE.Scene): { update(dt: number): void } {
       p.castShadow = false;
       c.add(p);
     }
-    c.position.set(-45 + rng() * 90, 8 + rng() * 7, -45 + rng() * 75);
+    let cx = 0, cz = 0;
+    for (let tries = 0; tries < 12; tries++) {
+      cx = -45 + rng() * 90;
+      cz = -45 + rng() * 75;
+      if (!keepClear(cx, cz, 6)) break;
+    }
+    c.position.set(cx, 8 + rng() * 7, cz);
     c.scale.setScalar(0.8 + rng() * 0.9);
     c.userData.speed = 0.25 + rng() * 0.4;
     clouds.push(c);

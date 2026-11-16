@@ -44,7 +44,7 @@ export type NetMsg =
   /** guest → host: introduce / update my profile. */
   | { t: 'hello'; name: string; species: string; color: string }
   /** host → everyone: begin the game with this line-up (seat order). `game` = registry id. */
-  | { t: 'start'; configs: StartConfig[]; game?: string }
+  | { t: 'start'; configs: StartConfig[]; game?: string; seed?: number }
   /** Jelly Peak: climber position/state (10 Hz). */
   | { t: 'peak'; pid: string; x: number; y: number; z: number; ry: number; s: string; best: number }
   /** Jelly Peak: someone gave `to` a leg-up. */

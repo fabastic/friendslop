@@ -6,7 +6,7 @@ import { Sfx } from './core/audio.ts';
 import { registerGame, registry, type GameContext, type Minigame } from './core/minigame.ts';
 import { Bowling, BOWLING_ASSETS, presetLineup } from './games/bowling/bowling.ts';
 import { Hub } from './hub/hub.ts';
-import { Peak } from './games/peak/peak.ts';
+import { Peak, setPeakSeed } from './games/peak/peak.ts';
 import { preloadAssets } from './core/assets.ts';
 import { NetSession } from './net/session.ts';
 
@@ -54,7 +54,8 @@ async function boot(): Promise<void> {
   };
 
   const hub = new Hub(document.body, net, {
-    play: (id, lineup) => {
+    play: (id, lineup, seed) => {
+      setPeakSeed(seed);
       presetLineup(lineup);
       load(id);
     },

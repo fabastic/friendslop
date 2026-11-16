@@ -13,6 +13,7 @@ import { Confetti } from '../bowling/confetti.ts';
 import type { NetMsg } from '../../net/protocol.ts';
 import type { SessionEvent } from '../../net/session.ts';
 import { buildMountain, type Mountain, type Checkpoint } from './mountain.ts';
+import { buildScenery } from '../bowling/world.ts';
 import { TouchControls } from './touch.ts';
 import './peak.css';
 
@@ -24,7 +25,7 @@ const WALK = 4.2;
 const JUMP_V = 7.8;
 const CLIMB_V = 2.4;
 const STAMINA_MAX = 100;
-const CLIMB_DRAIN = 16;
+const CLIMB_DRAIN = 11;
 const WALLJUMP_COST = 18;
 const SPLAT_DROP = 11;
 const INK = { width: 2.2, skip: (m: THREE.Mesh) => !!m.userData.noInk };
@@ -89,6 +90,17 @@ export class Peak implements Minigame {
   private sendT = 0;
   private coyote = 0;
   private jumpBuffer = 0;
+  private jumpHeld = false;
+  private simT = 0;
+  private camReach = 6;
+  private camLift = 0;
+  private launched = false;
+  private scenery!: { update(dt: number): void };
+  private boostQueued = false;
+  /** direction the climber faces/walks; the camera rides behind it */
+  private heading = Math.PI;
+  /** temporary look-around from dragging; springs back behind the climber */
+  private lookYaw = 0;
 
   // hud
   private hudRoot!: HTMLElement;
@@ -119,7 +131,9 @@ export class Peak implements Minigame {
     sc.far = 60;
     this.scene.add(this.sun, this.sun.target);
 
-    this.mountain = buildMountain(R, this.world, this.scene);
+    this.mountain = buildMountain(R, this.world, this.scene, takePeakSeed());
+    // the first game's candy shapes, balloons and clouds, kept clear of the mountain
+    this.scenery = buildScenery(this.scene, (x, z, r) => Math.hypot(x, z) < this.mountain.clearR + 4 + r);
     this.checkpoint = this.mountain.checkpoints[0];
     this.confetti = new Confetti(this.scene);
 
@@ -159,7 +173,9 @@ export class Peak implements Minigame {
     this.world.step();
 
     addInkOutlines(this.scene, INK);
-    this.yaw = 0;
+    this.heading = Math.atan2(-this.checkpoint.pos.x, -this.checkpoint.pos.z); // face the first spire
+    this.facing = this.heading;
+    this.yaw = this.heading + Math.PI;
     this.bindInput();
     if (this.online) {
       this.unsub.push(net.on((ev) => this.onNet(ev)));
@@ -219,7 +235,7 @@ export class Peak implements Minigame {
   }
 
   private countdown(): void {
-    this.hint('Reach the flag! WASD move · SPACE jump · hold SHIFT on a wall to climb · E boost a buddy · drag to look', 9);
+    this.hint('Reach the flag! W/S walk · A/D steer · SPACE jump (hold = higher) · SHIFT on a wall to climb · pink domes bounce · hoops refill · E boost a buddy', 10);
     let n = 3;
     const tick = () => {
       if (n > 0) {
@@ -246,8 +262,8 @@ export class Peak implements Minigame {
         }
         const p = s[s.length - 1];
         if (this.dragLast) {
-          this.yaw -= (p.x - this.dragLast.x) * 0.006;
-          this.pitch = clamp(this.pitch + (p.y - this.dragLast.y) * 0.004, -0.2, 1.1);
+          this.lookYaw = clamp(this.lookYaw - (p.x - this.dragLast.x) * 0.006, -2.6, 2.6);
+          this.pitch = clamp(this.pitch + (p.y - this.dragLast.y) * 0.004, 0.08, 1.1);
         }
         this.dragLast = { x: p.x, y: p.y };
       }),
@@ -279,31 +295,37 @@ export class Peak implements Minigame {
     const k = this.ctx.input.keys;
     const input = this.ctx.input;
     const canMove = this.started && !this.paused;
-    // camera-relative wish direction
-    const fx = -Math.sin(this.yaw);
-    const fz = -Math.cos(this.yaw);
-    let ix = 0;
-    let iz = 0;
+    void input;
+    // heading-relative controls (camera rides behind): A/D steer, W/S forward/back
+    let fIn = 0;
+    let rIn = 0;
     if (canMove) {
-      const f = (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0);
-      const r = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0);
-      ix = fx * f + -fz * r;
-      iz = fz * f + fx * r;
-      const len = Math.hypot(ix, iz);
-      if (len > 1) {
-        ix /= len;
-        iz /= len;
-      }
+      fIn = (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0) - (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0);
+      rIn = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0);
     }
-    if (canMove && input.wasPressed('Space')) this.jumpBuffer = 0.15;
+    if (!this.climbing) {
+      // turn faster when standing still, smoother at a run
+      const turnRate = fIn !== 0 ? 2.6 : 3.4;
+      this.heading -= rIn * turnRate * dt;
+    }
+    const back = fIn < 0 ? 0.55 : 1; // backing up is slower
+    let ix = Math.sin(this.heading) * fIn * back;
+    let iz = Math.cos(this.heading) * fIn * back;
+    // strafing nudge so A/D alone still shuffles a little sideways while turning
+    if (fIn === 0 && rIn !== 0 && !this.climbing) {
+      ix = -Math.cos(this.heading) * rIn * 0.25;
+      iz = Math.sin(this.heading) * rIn * 0.25;
+    }
     this.jumpBuffer -= dt;
+    this.jumpHeld = canMove && k.has('Space');
     this.coyote = this.grounded ? 0.12 : this.coyote - dt;
     const wantsClimb = canMove && (k.has('ShiftLeft') || k.has('ShiftRight'));
 
     // climbing: on a wall, holding shift, with stamina left
     const onWall = this.wallTime > 0;
     this.wallTime -= dt;
-    const pushing = -(ix * this.wallN.x + iz * this.wallN.z) > 0.3;
+    // any forward push into a wall counts (glancing approaches used to skate past)
+    const pushing = -(ix * this.wallN.x + iz * this.wallN.z) > 0.05 || fIn > 0;
     // grab from the air, or step onto the wall from the ground by pushing into it
     this.climbing = onWall && wantsClimb && this.stamina > 0 && (!this.grounded || pushing || this.climbing);
     if (this.climbing) {
@@ -313,17 +335,33 @@ export class Peak implements Minigame {
       // sideways shuffle along the wall
       const sx = -this.wallN.z;
       const sz = this.wallN.x;
-      const side = ix * sx + iz * sz;
+      const side = -rIn; // facing the wall, D shuffles right
       this.vel.x += sx * side * 1.6;
       this.vel.z += sz * side * 1.6;
       this.stamina = Math.max(0, this.stamina - CLIMB_DRAIN * dt * (up !== 0 ? 1 : 0.45));
+      // grabbing a hold gives back a little grip — climb hold to hold
+      const hands = this.tmpV.copy(this.pos).setY(this.pos.y + 0.75);
+      for (const h of this.mountain.holds) {
+        if (h.cooldown > 0 || hands.distanceTo(h.pos) > 0.6) continue;
+        h.cooldown = 2;
+        this.stamina = Math.min(STAMINA_MAX, this.stamina + 9);
+        this.me.char.kick(0.15);
+        this.ctx.sfx.plink(2 + Math.floor(Math.random() * 3));
+        break;
+      }
       if (this.jumpBuffer > 0 && this.stamina >= WALLJUMP_COST * 0.5) {
-        // wall-kick: up and away
         this.jumpBuffer = 0;
         this.stamina = Math.max(0, this.stamina - WALLJUMP_COST);
-        this.vel.set(this.wallN.x * 3.5, JUMP_V * 0.95, this.wallN.z * 3.5);
+        if (fIn < 0) {
+          // S + jump: kick off the wall, up and away (to reach the next spire)
+          this.vel.set(this.wallN.x * 4.2, JUMP_V * 0.9, this.wallN.z * 4.2);
+          this.wallTime = 0;
+        } else {
+          // dyno: lunge straight up the face to the next hold, staying on the wall
+          this.vel.set(-this.wallN.x * 0.8, 6.8, -this.wallN.z * 0.8);
+          this.launched = true;
+        }
         this.climbing = false;
-        this.wallTime = 0;
         this.me.char.kick(0.5);
         this.ctx.sfx.boing();
       }
@@ -333,7 +371,10 @@ export class Peak implements Minigame {
       const accel = this.grounded ? 30 : 9;
       this.vel.x += (ix * WALK - this.vel.x) * Math.min(1, accel * dt);
       this.vel.z += (iz * WALK - this.vel.z) * Math.min(1, accel * dt);
-      this.vel.y -= GRAVITY * dt;
+      // variable jump: let go early for a short hop; falls are snappier than rises
+      if (this.vel.y <= 0) this.launched = false;
+      const g = this.vel.y > 0 ? (this.jumpHeld || this.launched ? GRAVITY : GRAVITY * 2.3) : GRAVITY * 1.3;
+      this.vel.y = Math.max(-28, this.vel.y - g * dt);
       if (this.grounded && this.vel.y < 0) this.vel.y = -1;
       if (this.jumpBuffer > 0 && this.coyote > 0) {
         this.jumpBuffer = 0;
@@ -342,12 +383,24 @@ export class Peak implements Minigame {
         this.me.char.kick(0.45);
         this.ctx.sfx.tone(330, 0.1, 'sine', 0.2, 620);
       }
-      if (Math.hypot(ix, iz) > 0.1) this.facing = Math.atan2(ix, iz);
+      this.facing = this.heading;
       if (this.grounded) this.stamina = Math.min(STAMINA_MAX, this.stamina + 34 * dt);
     }
 
-    // move the capsule with the character controller
+    // cloud rafts swing first; anyone standing on one rides along
+    this.simT += dt;
+    this.mountain.stepMovers(this.simT);
     const want = { x: this.vel.x * dt, y: this.vel.y * dt, z: this.vel.z * dt };
+    if (this.grounded) {
+      for (const m of this.mountain.movers) {
+        const top = m.y + m.half.y;
+        if (Math.abs(this.pos.y - top) < 0.25 && Math.hypot(this.pos.x - m.pos.x, this.pos.z - m.pos.z) < 1.15) {
+          want.x += m.delta.x;
+          want.z += m.delta.z;
+          break;
+        }
+      }
+    }
     this.kcc.computeColliderMovement(this.collider, want);
     const mv = this.kcc.computedMovement();
     const wasGrounded = this.grounded;
@@ -386,6 +439,38 @@ export class Peak implements Minigame {
       this.airTop = this.pos.y;
     }
     if (this.pos.y < -10) this.splat();
+
+    // jelly trampolines
+    if (this.grounded && this.vel.y <= 0.5) {
+      for (const p of this.mountain.pads) {
+        if (Math.abs(this.pos.y - p.pos.y) < 0.45 && Math.hypot(this.pos.x - p.pos.x, this.pos.z - p.pos.z) < p.r) {
+          this.vel.y = this.jumpHeld ? 15 : 13;
+          this.launched = true; // full-height fling even without holding jump
+          this.grounded = false;
+          this.airTop = this.pos.y;
+          p.squish = 1;
+          this.me.char.impact(1);
+          this.me.char.kick(0.6);
+          this.ctx.sfx.boing();
+          this.ctx.sfx.tone(260, 0.25, 'sine', 0.25, 780);
+          break;
+        }
+      }
+    }
+    // candy hoops
+    const chest = this.tmpV.copy(this.pos).setY(this.pos.y + 0.45);
+    for (const r of this.mountain.rings) {
+      if (r.cooldown > 0 || chest.distanceTo(r.pos) > 0.85) continue;
+      r.cooldown = 3;
+      this.stamina = STAMINA_MAX;
+      this.vel.y = Math.max(this.vel.y, 6.5);
+      this.launched = true;
+      this.airTop = this.pos.y;
+      this.flashStamina();
+      this.ctx.hud.banner('Hoop! +💪', 900, '#7fe0ff');
+      this.ctx.sfx.plink(6);
+      this.confetti.burst(r.pos.clone(), 40);
+    }
 
     // progress, checkpoints, summit
     const h = Math.max(0, this.pos.y);
@@ -435,7 +520,8 @@ export class Peak implements Minigame {
       this.flashStamina();
     }
     // E: give the nearest buddy a leg-up
-    if (this.ctx.input.wasPressed('KeyE')) {
+    if (this.boostQueued) {
+      this.boostQueued = false;
       let best: Climber | null = null;
       let bd = 1.6;
       for (const o of this.others) {
@@ -456,6 +542,7 @@ export class Peak implements Minigame {
 
   private boosted(from: string): void {
     this.vel.y = JUMP_V * 1.45;
+    this.launched = true;
     this.grounded = false;
     this.climbing = false;
     this.stamina = Math.min(STAMINA_MAX, this.stamina + 30);
@@ -534,6 +621,12 @@ export class Peak implements Minigame {
     const t = performance.now() / 1000;
     if (this.ctx.input.wasPressed('Escape')) this.togglePause();
     if (this.ctx.input.wasPressed('KeyR') && !this.paused && !this.finished) this.splat();
+    // Latch one-shot presses here (every rendered frame) — the fixed step can skip frames on
+    // high-refresh screens, and presses are cleared at the end of each frame.
+    if (this.started && !this.paused) {
+      if (this.ctx.input.wasPressed('Space')) this.jumpBuffer = 0.16;
+      if (this.ctx.input.wasPressed('KeyE')) this.boostQueued = true;
+    }
     // me (interpolated)
     const r = this.me.char.root;
     r.position.lerpVectors(this.prevPos, this.pos, alpha);
@@ -556,6 +649,7 @@ export class Peak implements Minigame {
     }
     for (const c of [this.me, ...this.others]) c.char.update(dt);
     this.mountain.update(dt, t);
+    this.scenery.update(dt);
     this.confetti.update(dt);
     this.updateDust(dt);
     this.updateCamera(dt);
@@ -569,26 +663,34 @@ export class Peak implements Minigame {
   private camTarget = new THREE.Vector3();
 
   private updateCamera(dt: number): void {
-    const k = this.ctx.input.keys;
-    if (k.has('KeyQ')) this.yaw += dt * 2;
-    if (k.has('KeyF')) this.yaw -= dt * 2;
+    // ride behind the climber; look-around drag eases back when you let go
+    if (!this.dragLast) this.lookYaw *= Math.exp(-dt * 2.5);
+    const behind = this.facing + Math.PI + this.lookYaw;
+    this.yaw = lerpAngle(this.yaw, behind, 1 - Math.exp(-dt * (this.climbing ? 4 : 7)));
     const p = this.me.char.root.position;
     this.camTarget.lerp(this.tmpV.set(p.x, p.y + 0.9, p.z), 1 - Math.exp(-dt * 10));
     const d = this.camDist;
-    const cx = this.camTarget.x + Math.sin(this.yaw) * Math.cos(this.pitch) * d;
-    const cz = this.camTarget.z + Math.cos(this.yaw) * Math.cos(this.pitch) * d;
-    let cy = this.camTarget.y + Math.sin(this.pitch) * d;
-    // keep the camera out of the pillar
-    const rr = Math.hypot(cx, cz);
-    const minR = this.mountain.pillarR + 0.6;
-    let x = cx;
-    let z = cz;
-    if (rr < minR) {
-      x = (cx / (rr || 1)) * minR;
-      z = (cz / (rr || 1)) * minR;
-      cy += 0.5;
+    const pit = Math.min(1.25, this.pitch + this.camLift * 0.7); // rise over rocks that block the view
+    const cx = this.camTarget.x + Math.sin(this.yaw) * Math.cos(pit) * d;
+    const cz = this.camTarget.z + Math.cos(this.yaw) * Math.cos(pit) * d;
+    let cy = this.camTarget.y + Math.sin(pit) * d;
+    cy = Math.max(0.5, cy);
+    // spring-arm: if the pillar, a slab or a raft is between us and the camera, slide in front of it
+    const o = this.camTarget;
+    const dir = this.tmpV.set(cx - o.x, cy - o.y, cz - o.z);
+    const len = dir.length();
+    let reach = len;
+    if (len > 0.01) {
+      dir.divideScalar(len);
+      const ray = new this.R.Ray({ x: o.x, y: o.y, z: o.z }, { x: dir.x, y: dir.y, z: dir.z });
+      const hit = this.world.castRay(ray, len, true, undefined, undefined, this.collider, this.body);
+      if (hit) reach = Math.max(0.8, hit.timeOfImpact - 0.25);
+      this.camLift += ((reach < len * 0.6 ? 1 : 0) - this.camLift) * (1 - Math.exp(-dt * 3));
     }
-    this.camera.position.set(x, Math.max(0.5, cy), z);
+    // ease outward (no popping), snap inward (never see through walls)
+    this.camReach = reach < this.camReach ? reach : this.camReach + (reach - this.camReach) * (1 - Math.exp(-dt * 4));
+    const k = this.camReach / Math.max(len, 0.01);
+    this.camera.position.set(o.x + (cx - o.x) * k, o.y + (cy - o.y) * k, o.z + (cz - o.z) * k);
     this.camera.lookAt(this.camTarget);
     // the sky warms from day-blue to sunset as you climb
     const u = clamp(p.y / this.mountain.summit.y, 0, 1);
@@ -711,6 +813,8 @@ export class Peak implements Minigame {
       },
       start: () => (this.started = true),
       summit: () => this.mountain.summit.toArray(),
+      pads: () => this.mountain.pads.map((p) => p.pos.toArray()),
+      rafts: () => this.mountain.movers.map((m) => m.pos.toArray()),
     };
   }
 
@@ -752,4 +856,16 @@ function readProfile(): { name: string; species: string; color: string } {
     /* fallthrough */
   }
   return { name: 'Climber', species: 'cat', color: JELLY_COLORS[0] };
+}
+
+// ---------------------------------------------------------------- run seed
+let nextSeed: number | null = null;
+/** Hub → game: the route seed for the next run (shared by the whole party). */
+export function setPeakSeed(seed: number | undefined): void {
+  nextSeed = seed ?? null;
+}
+function takePeakSeed(): number {
+  const s = nextSeed ?? (Math.random() * 2 ** 31) | 0;
+  nextSeed = null;
+  return s;
 }

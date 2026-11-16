@@ -53,7 +53,7 @@ function loadProfile(): Profile {
 
 export interface HubCallbacks {
   /** Launch a game; lineup = party members (or just me). */
-  play(id: string, lineup: Profile[]): void;
+  play(id: string, lineup: Profile[], seed?: number): void;
 }
 
 export class Hub {
@@ -84,7 +84,7 @@ export class Hub {
     this.unsub = session.on((ev) => {
       if (ev.e === 'error') this.toast(ev.text);
       if (ev.e === 'host-lost') this.toast('The party host left 😢');
-      if (ev.e === 'msg' && ev.m.t === 'start' && !session.isHost) this.launch(ev.m.game ?? 'bowling');
+      if (ev.e === 'msg' && ev.m.t === 'start' && !session.isHost) this.launch(ev.m.game ?? 'bowling', ev.m.seed);
       // leader went back to the hub: follow them so nobody is stranded in a finished game
       if (ev.e === 'lobby' && !session.isHost && this.sawRunning && !session.gameRunning && this.root.classList.contains('hidden')) {
         this.toast('The leader is back in the hub');
@@ -191,28 +191,29 @@ export class Hub {
     el.querySelectorAll<HTMLButtonElement>('.hub-game').forEach((b) => {
       b.onclick = () => {
         const g = GAMES.find((x) => x.id === b.dataset.id)!;
+        const runSeed = (Math.random() * 2 ** 31) | 0;
         if (!g.ready) return this.toast(`${g.title} is still in the jelly mould 🍮`);
         if (this.session.active && !this.session.isHost) return this.toast('Only the party leader picks the game');
         if (this.session.active) {
-          this.session.send({ t: 'start', configs: this.session.configs(), game: g.id });
+          this.session.send({ t: 'start', configs: this.session.configs(), game: g.id, seed: runSeed });
           this.session.gameRunning = true;
           this.session.broadcastLobby();
         }
         b.classList.add('launching');
         window.setTimeout(() => {
           b.classList.remove('launching');
-          this.launch(g.id);
+          this.launch(g.id, runSeed);
         }, 420);
       };
     });
   }
 
-  private launch(id: string): void {
+  private launch(id: string, seed?: number): void {
     const lineup: Profile[] = this.session.active
       ? this.session.players.map((p) => ({ name: p.name, species: p.species, color: p.color }))
       : [this.profile];
     this.hide();
-    this.cb.play(id, lineup);
+    this.cb.play(id, lineup, seed);
   }
 
   private renderParty(): void {
