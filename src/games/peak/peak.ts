@@ -13,7 +13,11 @@ import { Confetti } from '../bowling/confetti.ts';
 import type { NetMsg } from '../../net/protocol.ts';
 import type { SessionEvent } from '../../net/session.ts';
 import { buildMountain, type Mountain, type Checkpoint } from './mountain.ts';
-import { buildScenery } from '../bowling/world.ts';
+import { buildScenery, mulberry } from '../bowling/world.ts';
+import { cloneModel } from '../../core/assets.ts';
+
+/** Sketchfab props shown in Jelly Peak (loaded when the game starts). */
+export const PEAK_ASSETS = ['ergoni-magical-find.glb', 'wilemben-froggie-pie.glb', 'cuteleaf-pawtisserie.glb'];
 import { TouchControls } from './touch.ts';
 import './peak.css';
 
@@ -135,6 +139,7 @@ export class Peak implements Minigame {
     this.mountain = buildMountain(R, this.world, this.scene, takePeakSeed());
     // the first game's candy shapes, balloons and clouds, kept clear of the mountain
     this.scenery = buildScenery(this.scene, (x, z, r) => Math.hypot(x, z) < this.mountain.clearR + 4 + r);
+    this.scatterProps();
     this.checkpoint = this.mountain.checkpoints[0];
     this.confetti = new Confetti(this.scene);
 
@@ -188,6 +193,33 @@ export class Peak implements Minigame {
     this.countdown();
     this.exposeDebug();
   }
+
+  /** Giant Sketchfab dioramas (CC BY) dotted around the meadow and floating in the sky. */
+  private scatterProps(): void {
+    const rnd = mulberry(7 + Math.floor(this.mountain.height * 100));
+    const placed: THREE.Vector3[] = [];
+    let n = 0;
+    for (let i = 0; i < 40 && n < 11; i++) {
+      const file = PEAK_ASSETS[n % PEAK_ASSETS.length];
+      const floating = n % 4 === 3;
+      const size = floating ? 3 + rnd() * 2 : 4 + rnd() * 4;
+      const a = rnd() * Math.PI * 2;
+      const r = this.mountain.clearR + 6 + rnd() * 20;
+      const pos = new THREE.Vector3(Math.sin(a) * r, floating ? 8 + rnd() * (this.mountain.height - 10) : 0, Math.cos(a) * r);
+      if (placed.some((p) => Math.hypot(p.x - pos.x, p.z - pos.z) < size + 3)) continue;
+      const m = cloneModel(file, size, 'max');
+      if (!m) continue;
+      m.position.copy(pos);
+      m.rotation.y = Math.atan2(-pos.x, -pos.z) + (rnd() - 0.5) * 0.8; // roughly face the tower
+      m.traverse((o) => (o.userData.noInk = true)); // dense scans: skip the outline pass
+      this.scene.add(m);
+      if (floating) this.floatingProps.push({ o: m, base: pos.y, ph: rnd() * 6 });
+      placed.push(pos);
+      n++;
+    }
+  }
+
+  private floatingProps: { o: THREE.Object3D; base: number; ph: number }[] = [];
 
   /** Little candy-dust puff where we land hard. */
   private dust(at: THREE.Vector3, power: number): void {
@@ -651,6 +683,10 @@ export class Peak implements Minigame {
     for (const c of [this.me, ...this.others]) c.char.update(dt);
     this.mountain.update(dt, t);
     this.scenery.update(dt);
+    for (const p of this.floatingProps) {
+      p.o.position.y = p.base + Math.sin(t * 0.6 + p.ph) * 0.4;
+      p.o.rotation.y += dt * 0.12;
+    }
     this.confetti.update(dt);
     this.updateDust(dt);
     this.updateCamera(dt);

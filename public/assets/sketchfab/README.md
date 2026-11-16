@@ -17,3 +17,11 @@ Downloaded 2026-11-15 as GLB. Every model used in-game must be credited (CC BY).
 | `tombolaso-shooting-ball.glb` | [Ball - Shooting area](https://sketchfab.com/3d-models/249292afe98a4e469460e7809d860180) | Tombolaso | CC BY |
 
 Collection: https://sketchfab.com/tombolaso/collections/mozilla-hub-tombolaso-1663e2e9831246d48ce55e4c4fd84400
+
+### Jelly Peak background props
+
+| File | Model | Author | Licence |
+|---|---|---|---|
+| `ergoni-magical-find.glb` | [Magical Find](https://sketchfab.com/3d-models/magical-find-944ad1c760b14f3ca4f5a6039744bfdf) | Ergoni | CC BY 4.0 |
+| `wilemben-froggie-pie.glb` | [Froggie Pie!! by Lemonscribs](https://sketchfab.com/3d-models/froggie-pie-by-lemonscribs-41e0a74b920f4934ade4e420ee1cd48c) | wilemben | CC BY 4.0 |
+| `cuteleaf-pawtisserie.glb` | [Pawtisserie](https://sketchfab.com/3d-models/pawtisserie-b8f0a9f2d01f4e609b84b2d787d96211) | CuteLeaf | CC BY 4.0 |
