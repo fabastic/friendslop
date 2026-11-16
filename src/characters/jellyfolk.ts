@@ -183,8 +183,25 @@ export class JellyFolk {
   private hasLast = false;
   private accel = new THREE.Vector3();
   private neckBase = new THREE.Vector3();
-  /** 0..1 how jelly-soft this character is (1 = default) */
+  /** per-character softness multiplier (1 = default) */
   wobble = 1;
+  /** player setting (0 = firm … 2 = extra jiggly), shared by every character; saved in the browser */
+  static globalWobble = (() => {
+    try {
+      const v = parseFloat(localStorage.getItem('jb.wobble') ?? '');
+      return Number.isFinite(v) ? Math.min(2, Math.max(0, v)) : 1;
+    } catch {
+      return 1;
+    }
+  })();
+  static setGlobalWobble(v: number): void {
+    JellyFolk.globalWobble = Math.min(2, Math.max(0, v));
+    try {
+      localStorage.setItem('jb.wobble', String(JellyFolk.globalWobble));
+    } catch {
+      /* storage blocked */
+    }
+  }
   /** horizontal speed the game moved us at (drives the walk cycle), m/s */
   speed = 0;
   private walkPhase = 0;
@@ -432,7 +449,7 @@ export class JellyFolk {
       this.accel.applyQuaternion(this.tmpQ.setFromRotationMatrix(this.root.matrixWorld).invert());    }
     this.lastWorld.copy(wpos);
     this.hasLast = true;
-    const jig = Math.max(0, this.wobble);
+    const jig = Math.max(0, this.wobble * JellyFolk.globalWobble);
     const ac = this.tmpC.copy(this.accel).multiplyScalar(jig);
     const hO = this.softHead.step(dt, ac);
     const bO = this.softBelly.step(dt, ac);

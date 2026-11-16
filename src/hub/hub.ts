@@ -1,5 +1,5 @@
 /** Game hub: profile, party (online room), friends and the game shelf. */
-import { SPECIES, JELLY_COLORS } from '../characters/jellyfolk.ts';
+import { SPECIES, JELLY_COLORS, JellyFolk } from '../characters/jellyfolk.ts';
 import type { NetSession } from '../net/session.ts';
 import { normalizeCode } from '../net/protocol.ts';
 import { Friends } from './friends.ts';
@@ -152,7 +152,14 @@ export class Hub {
       <span class="hub-avatar" style="--pc:${this.profile.color}">${sp.emoji}</span>
       <input class="hub-name" maxlength="14" aria-label="Your name" value="${esc(this.profile.name)}">
       <select class="hub-species" aria-label="Animal">${SPECIES.map((s) => `<option value="${s.id}"${s.id === sp.id ? ' selected' : ''}>${s.emoji} ${s.name}</option>`).join('')}</select>
-      <span class="hub-colors">${JELLY_COLORS.map((c) => `<button class="hub-color${c === this.profile.color ? ' on' : ''}" style="--c:${c}" data-c="${c}" aria-label="Colour ${c}"></button>`).join('')}</span>`;
+      <span class="hub-colors">${JELLY_COLORS.map((c) => `<button class="hub-color${c === this.profile.color ? ' on' : ''}" style="--c:${c}" data-c="${c}" aria-label="Colour ${c}"></button>`).join('')}</span>
+      <label class="hub-wobble" title="How jiggly the jelly folk are">🍮 Wobble <input type="range" min="0" max="2" step="0.1" value="${JellyFolk.globalWobble}" aria-label="Wobble strength"><output>${wobbleLabel(JellyFolk.globalWobble)}</output></label>`;
+    const wob = el.querySelector('.hub-wobble input') as HTMLInputElement;
+    const wobOut = el.querySelector('.hub-wobble output') as HTMLOutputElement;
+    wob.oninput = () => {
+      JellyFolk.setGlobalWobble(parseFloat(wob.value));
+      wobOut.textContent = wobbleLabel(JellyFolk.globalWobble);
+    };
     const name = el.querySelector('.hub-name') as HTMLInputElement;
     name.onchange = () => this.setProfile({ name: name.value.trim() || this.profile.name });
     const species = el.querySelector('.hub-species') as HTMLSelectElement;
@@ -366,6 +373,10 @@ function rerender(el: HTMLElement, html: string, bind: () => void): void {
     if (f && caret !== null) f.setSelectionRange(caret, caret);
   }
   bind();
+}
+
+function wobbleLabel(v: number): string {
+  return v === 0 ? 'Firm' : v < 0.7 ? 'Soft' : v <= 1.3 ? 'Jelly' : v < 1.8 ? 'Wobbly' : 'Max jiggle';
 }
 
 function esc(s: string): string {
