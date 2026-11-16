@@ -4,7 +4,8 @@ import { Hud } from './core/hud.ts';
 import { Input } from './core/input.ts';
 import { Sfx } from './core/audio.ts';
 import { registerGame, registry, type GameContext, type Minigame } from './core/minigame.ts';
-import { Bowling, BOWLING_ASSETS } from './games/bowling/bowling.ts';
+import { Bowling, BOWLING_ASSETS, presetLineup } from './games/bowling/bowling.ts';
+import { Hub } from './hub/hub.ts';
 import { preloadAssets } from './core/assets.ts';
 import { NetSession } from './net/session.ts';
 
@@ -18,6 +19,7 @@ async function boot(): Promise<void> {
   const input = new Input(engine.renderer.domElement);
   const sfx = new Sfx();
 
+  const net = new NetSession();
   let current: Minigame | null = null;
   let currentId = 'bowling';
 
@@ -40,11 +42,19 @@ async function boot(): Promise<void> {
     hud,
     input,
     sfx,
-    net: new NetSession(),
+    net,
     requestRestart: () => queueMicrotask(() => load(currentId)),
+    exitToHub: () => queueMicrotask(() => hub.show()),
   };
 
-  load(currentId);
+  const hub = new Hub(document.body, net, {
+    play: (id, lineup) => {
+      presetLineup(lineup);
+      load(id);
+    },
+  });
+
+  load(currentId); // bowling lane stays alive as the hub's backdrop
   engine.start();
 
   // Debug / automation hook

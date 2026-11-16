@@ -87,6 +87,11 @@ const INK: InkOptions = {
 /** Remembered between games so "Play again" keeps the same line-up. */
 let lastConfig: PlayerConfig[] = [{ name: 'Player 1', species: 'cat', color: JELLY_COLORS[0] }];
 
+/** Hub → game: pre-fill the setup line-up (e.g. with the party members). */
+export function presetLineup(cfg: { name: string; species: string; color: string }[]): void {
+  if (cfg.length) lastConfig = cfg.map((c) => ({ name: c.name, species: c.species as Species, color: c.color }));
+}
+
 export class Bowling implements Minigame {
   readonly id = 'bowling';
   readonly title = 'Jelly Bowl';
@@ -1109,9 +1114,9 @@ export class Bowling implements Minigame {
       this.closeOverlay();
       this.showSetup();
     });
-    button('⏏ Exit to title', 'pill wide', () => {
+    button('⏏ Exit to hub', 'pill wide', () => {
       this.paused = false;
-      this.ctx.requestRestart();
+      this.ctx.exitToHub();
     });
 
     const set = h.el('div', 'settings', card);

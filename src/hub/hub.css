@@ -1,0 +1,78 @@
+/* ================= game hub ================= */
+.hub { position: fixed; inset: 0; z-index: 50; overflow-y: auto; color: var(--ink);
+  background: radial-gradient(circle at 20% 10%, #ffe1f0 0, transparent 45%), radial-gradient(circle at 85% 80%, #d8f6ff 0, transparent 50%), linear-gradient(160deg, #fff4e0, #f6e6ff);
+  transition: opacity .35s, transform .35s; }
+.hub.hidden { opacity: 0; transform: scale(1.04); pointer-events: none; }
+.hub-bg { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+.hub-bg i { position: absolute; border-radius: 50%; opacity: .35; animation: hubFloat 9s ease-in-out infinite; }
+.hub-bg i:nth-child(1) { width: 180px; height: 180px; background: var(--pink); left: -40px; top: 30%; }
+.hub-bg i:nth-child(2) { width: 90px; height: 90px; background: var(--yellow); right: 12%; top: 8%; animation-delay: -2s; }
+.hub-bg i:nth-child(3) { width: 140px; height: 140px; background: var(--cyan); right: -30px; bottom: 10%; animation-delay: -4s; }
+.hub-bg i:nth-child(4) { width: 60px; height: 60px; background: #7b4dff; left: 40%; bottom: 6%; animation-delay: -1s; border-radius: 18px; }
+.hub-bg i:nth-child(5) { width: 40px; height: 40px; background: #3ccf7a; left: 18%; top: 6%; animation-delay: -3s; }
+.hub-bg i:nth-child(6) { width: 70px; height: 70px; background: #ff8a3d; left: 62%; top: 40%; animation-delay: -6s; border-radius: 22px; }
+@keyframes hubFloat { 50% { transform: translateY(-22px) rotate(12deg) scale(1.06, .94); } }
+.hub-top { position: relative; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; padding: 18px clamp(16px, 4vw, 40px); }
+.hub-logo { font-size: clamp(30px, 5vw, 46px); font-weight: 700; color: var(--pink); -webkit-text-stroke: 2px var(--ink); paint-order: stroke fill; text-shadow: 0 5px 0 var(--ink); }
+.hub-logo span { color: var(--yellow); }
+.hub-me { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; background: var(--white); border: 3px solid var(--ink); border-radius: 999px; padding: 6px 14px 6px 6px; box-shadow: 0 4px 0 var(--ink); }
+.hub-avatar { display: grid; place-items: center; width: 42px; height: 42px; font-size: 24px; border-radius: 50%; background: color-mix(in srgb, var(--pc) 35%, white); border: 3px solid var(--pc); flex: none; }
+.hub-avatar.sm { width: 28px; height: 28px; font-size: 16px; border-width: 2px; }
+.hub-name, .hub-species, .hub input { font: inherit; color: var(--ink); border: 2px solid var(--ink); border-radius: 12px; padding: 5px 10px; background: #fff; min-width: 0; }
+.hub-name { width: 130px; font-weight: 700; }
+.hub-colors { display: flex; gap: 4px; }
+.hub-color { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--ink); background: var(--c); cursor: pointer; transition: transform .15s; }
+.hub-color.on, .hub-color:hover { transform: scale(1.25); box-shadow: 0 0 0 2px var(--white), 0 0 0 4px var(--c); }
+.hub-main { position: relative; display: grid; grid-template-columns: 1fr 340px; gap: 24px; padding: 0 clamp(16px, 4vw, 40px) 40px; }
+@media (max-width: 860px) { .hub-main { grid-template-columns: 1fr; } }
+.hub h2 { margin: 6px 0 14px; font-size: 26px; }
+.hub h3 { margin: 0 0 8px; font-size: 20px; display: flex; gap: 8px; align-items: baseline; justify-content: space-between; }
+.hub-games { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 16px; }
+.hub-game { position: relative; text-align: left; font: inherit; color: var(--ink); display: flex; flex-direction: column; gap: 6px; padding: 16px; min-height: 210px; cursor: pointer;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--gt) 30%, white), var(--white) 70%); border: 3px solid var(--ink); border-radius: 26px; box-shadow: 0 6px 0 var(--ink);
+  animation: hubPop .5s var(--d) both cubic-bezier(.3, 1.6, .5, 1); transition: transform .18s, box-shadow .18s; }
+.hub-game:hover { transform: translateY(-4px) rotate(-1deg) scale(1.02); box-shadow: 0 10px 0 var(--ink); }
+.hub-game:active { transform: translateY(3px) scale(.98, 1.02); box-shadow: 0 2px 0 var(--ink); }
+.hub-game.soon { filter: saturate(.55); opacity: .85; }
+.hub-game.soon:hover { transform: rotate(1deg); }
+@keyframes hubPop { from { opacity: 0; transform: translateY(24px) scale(.8); } }
+.hg-art { font-size: 54px; line-height: 1; filter: drop-shadow(0 4px 0 rgba(42, 27, 74, .25)); animation: hubBob 2.4s ease-in-out infinite; align-self: flex-start; }
+@keyframes hubBob { 50% { transform: translateY(-5px) scale(1.05, .95); } }
+.hg-tag { position: absolute; top: 14px; right: 14px; font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 999px; background: var(--gt); color: #fff; border: 2px solid var(--ink); }
+.hub-game.soon .hg-tag { background: #fff; color: var(--ink); }
+.hub-game b { font-size: 22px; }
+.hg-blurb { font-size: 14px; opacity: .8; flex: 1; }
+.hg-players { font-size: 13px; font-weight: 700; opacity: .7; }
+.hub-side { display: flex; flex-direction: column; gap: 16px; }
+.hub-panel { background: var(--white); border: 3px solid var(--ink); border-radius: 24px; padding: 16px; box-shadow: 0 6px 0 var(--ink); }
+.hub-muted { font-size: 13px; opacity: .65; margin: 4px 0 10px; font-weight: 500; }
+.hub-row { display: flex; gap: 8px; margin-top: 8px; }
+.hub-row input { flex: 1; text-transform: uppercase; letter-spacing: 2px; font-weight: 700; }
+.hub-row .hp-say { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.hub-btn { font: inherit; font-weight: 700; cursor: pointer; color: var(--ink); background: var(--yellow); border: 3px solid var(--ink); border-radius: 14px; padding: 7px 14px; box-shadow: 0 3px 0 var(--ink); transition: transform .12s; }
+.hub-btn:hover { transform: translateY(-2px); }
+.hub-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink); }
+.hub-btn:disabled { opacity: .5; cursor: wait; }
+.hub-btn.primary { background: var(--pink); color: #fff; width: 100%; padding: 10px; font-size: 17px; }
+.hub-btn.ghost { background: transparent; box-shadow: none; border-color: transparent; text-decoration: underline; width: 100%; }
+.hub-btn.sm { padding: 3px 9px; font-size: 13px; border-width: 2px; border-radius: 10px; width: auto; }
+.hp-badge { font-size: 12px; background: var(--cyan); border: 2px solid var(--ink); border-radius: 999px; padding: 2px 8px; }
+.hp-codebig { display: block; width: 100%; font: inherit; font-size: 34px; font-weight: 700; letter-spacing: 8px; padding: 6px; cursor: pointer; color: var(--ink); background: #fff3c4; border: 3px dashed var(--ink); border-radius: 16px; }
+.hp-codebig small { display: block; font-size: 11px; letter-spacing: 0; opacity: .6; }
+.hp-list, .hf-list { list-style: none; padding: 0; margin: 10px 0; display: flex; flex-direction: column; gap: 6px; }
+.hp-list li { display: flex; align-items: center; gap: 8px; font-weight: 700; padding: 4px 8px; border-radius: 12px; background: color-mix(in srgb, var(--pc) 14%, white); animation: hubPop .4s both; }
+.hp-list li i { font-weight: 500; opacity: .6; }
+.hp-list li.empty, .hf-list li.empty { background: none; border: 2px dashed rgba(42, 27, 74, .25); color: rgba(42, 27, 74, .5); font-weight: 500; justify-content: center; padding: 8px; }
+.hp-chat { max-height: 110px; overflow-y: auto; font-size: 13px; }
+.hp-chat p { margin: 2px 0; }
+.hf-mycode { font: inherit; font-weight: 700; letter-spacing: 2px; cursor: pointer; border: 2px solid var(--ink); border-radius: 8px; background: #e8fbff; padding: 1px 6px; }
+.hf-list li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 12px; background: #f4f0fb; }
+.hf-dot { width: 10px; height: 10px; border-radius: 50%; background: #bbb; flex: none; }
+.hf-list li.on .hf-dot { background: #3ccf7a; box-shadow: 0 0 0 3px rgba(60, 207, 122, .3); }
+.hf-name { flex: 1; font-weight: 700; overflow: hidden; text-overflow: ellipsis; }
+.hf-x { border: 0; background: none; font-size: 20px; cursor: pointer; color: var(--ink); opacity: .4; }
+.hf-x:hover { opacity: 1; }
+.hub-toast { position: fixed; left: 50%; bottom: 24px; z-index: 80; transform: translate(-50%, 200%); background: var(--ink); color: var(--white); padding: 10px 18px; border-radius: 999px; font-weight: 700; pointer-events: none; max-width: calc(100vw - 32px); }
+.hub-toast.in { animation: hubToast 2.6s both; }
+@keyframes hubToast { 12%, 85% { transform: translate(-50%, 0); } }
+.hub-invite { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 90; display: flex; gap: 8px; align-items: center; background: var(--white); border: 3px solid var(--ink); border-radius: 18px; padding: 10px 14px; box-shadow: 0 6px 0 var(--ink); animation: hubPop .4s both; }

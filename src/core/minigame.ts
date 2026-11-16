@@ -15,6 +15,8 @@ export interface GameContext {
   net: NetSession;
   /** Ask the host to restart / swap games. */
   requestRestart(): void;
+  /** Leave the current game and return to the game hub. */
+  exitToHub(): void;
 }
 
 export interface Minigame {
