@@ -13,6 +13,7 @@ import { Confetti } from '../bowling/confetti.ts';
 import type { NetMsg } from '../../net/protocol.ts';
 import type { SessionEvent } from '../../net/session.ts';
 import { buildMountain, type Mountain, type Checkpoint } from './mountain.ts';
+import { TouchControls } from './touch.ts';
 import './peak.css';
 
 const CHAR_SCALE = 0.8;
@@ -135,7 +136,7 @@ export class Peak implements Minigame {
     lineup.forEach((p, i) => {
       const c = this.makeClimber(p);
       const a = (i - (lineup.length - 1) / 2) * 0.7;
-      const start = this.checkpoint.pos.clone().add(new THREE.Vector3(a, 0, 1.4)); // in front of the mushroom
+      const start = this.checkpoint.pos.clone().add(new THREE.Vector3(a, 0, 0.6));
       c.char.root.position.copy(start);
       if (p.pid === myPid) {
         this.me = c;
@@ -165,8 +166,43 @@ export class Peak implements Minigame {
       const hb = window.setInterval(() => this.sendState(), 1000);
       this.unsub.push(() => window.clearInterval(hb));
     }
+    const touch = new TouchControls(this.hudRoot, ctx.input);
+    this.unsub.push(() => touch.dispose());
     this.countdown();
     this.exposeDebug();
+  }
+
+  /** Little candy-dust puff where we land hard. */
+  private dust(at: THREE.Vector3, power: number): void {
+    const n = Math.round(6 + power * 8);
+    for (let i = 0; i < n; i++) {
+      const m = new THREE.Mesh(this.dustGeo, this.dustMat);
+      const a = (i / n) * Math.PI * 2;
+      m.position.set(at.x + Math.cos(a) * 0.15, at.y + 0.05, at.z + Math.sin(a) * 0.15);
+      m.userData.v = new THREE.Vector3(Math.cos(a) * (1 + power * 2), 0.8 + Math.random(), Math.sin(a) * (1 + power * 2));
+      m.userData.life = 0.6;
+      this.scene.add(m);
+      this.puffs.push(m);
+    }
+  }
+
+  private dustGeo = new THREE.IcosahedronGeometry(0.06, 0);
+  private dustMat = new THREE.MeshBasicMaterial({ color: '#fff3e6', transparent: true, opacity: 0.9 });
+  private puffs: THREE.Mesh[] = [];
+
+  private updateDust(dt: number): void {
+    for (let i = this.puffs.length - 1; i >= 0; i--) {
+      const m = this.puffs[i];
+      const v = m.userData.v as THREE.Vector3;
+      m.userData.life -= dt;
+      v.multiplyScalar(1 - dt * 4);
+      m.position.addScaledVector(v, dt);
+      m.scale.setScalar(Math.max(0.01, m.userData.life / 0.6) * 1.4);
+      if (m.userData.life <= 0) {
+        this.scene.remove(m);
+        this.puffs.splice(i, 1);
+      }
+    }
   }
 
   // ---------------------------------------------------------------- setup
@@ -337,9 +373,14 @@ export class Peak implements Minigame {
       if (!wasGrounded && this.grounded) {
         const drop = this.airTop - this.pos.y;
         if (drop > SPLAT_DROP) this.splat();
-        else if (drop > 1.2) {
-          this.me.char.kick(Math.min(0.8, drop * 0.15));
-          this.ctx.sfx.tone(200, 0.08, 'sine', 0.2);
+        else if (drop > 0.4) {
+          // gummy landing: squash, ripple, snap back
+          this.me.char.impact(Math.min(1.2, 0.25 + drop * 0.18));
+          if (drop > 1.2) {
+            this.me.char.kick(Math.min(0.8, drop * 0.15));
+            this.ctx.sfx.tone(200, 0.08, 'sine', 0.2);
+            this.dust(this.pos, Math.min(1, drop / 6));
+          }
         }
       }
       this.airTop = this.pos.y;
@@ -360,8 +401,13 @@ export class Peak implements Minigame {
     if (!this.finished && this.grounded && this.pos.y > this.mountain.summit.y - 0.6) this.reachSummit();
 
     // state for animation/network
-    const st: CharState = this.finished ? 'dance' : this.climbing ? 'windup' : !this.grounded ? (this.vel.y > 0 ? 'cheer' : 'flop') : 'idle';
-    if (this.me.char.state !== st) this.me.char.setState(st);
+    const moving = Math.hypot(this.vel.x, this.vel.z) > 0.4;
+    const falling = !this.grounded && this.vel.y < -6;
+    const st: CharState = this.finished ? 'dance'
+      : this.climbing ? 'climb'
+      : !this.grounded ? (this.vel.y > 0.5 ? 'jump' : falling ? 'fall' : 'jump')
+      : moving ? 'walk' : 'idle';
+    if (this.me.char.state !== st && !(this.me.char.state === 'release' && st === 'idle')) this.me.char.setState(st);
   }
 
   private splat(): void {
@@ -492,18 +538,17 @@ export class Peak implements Minigame {
     const r = this.me.char.root;
     r.position.lerpVectors(this.prevPos, this.pos, alpha);
     r.rotation.y = lerpAngle(r.rotation.y, this.facing, 1 - Math.exp(-dt * 14));
-    // waddle when walking
+    // the rig's walk cycle is driven by real ground speed
     const speed = Math.hypot(this.vel.x, this.vel.z);
-    this.me.char.setMove(this.grounded && !this.climbing ? speed : 0);
-    if (this.grounded && speed > 0.5) r.position.y += Math.abs(Math.sin(t * 12)) * 0.02;
+    this.me.char.speed = this.grounded && !this.climbing ? speed : 0;
+    void t;
     // remote climbers
     for (const o of this.others) {
       const tg = o.target;
       if (!tg) continue;
       const k = 1 - Math.exp(-dt * 12);
       const or = o.char.root;
-      const gap = Math.hypot(tg.x - or.position.x, tg.z - or.position.z);
-      o.char.setMove(tg.s === 'idle' ? Math.min(5, gap * 10) : 0);
+      o.char.speed = tg.s === 'walk' ? Math.min(5, Math.hypot(tg.x - or.position.x, tg.z - or.position.z) * 12 + 2) : 0;
       if (or.position.distanceTo(this.tmpV.set(tg.x, tg.y, tg.z)) > 6) or.position.copy(this.tmpV);
       else or.position.lerp(this.tmpV, k);
       or.rotation.y = lerpAngle(or.rotation.y, tg.ry, k);
@@ -512,12 +557,15 @@ export class Peak implements Minigame {
     for (const c of [this.me, ...this.others]) c.char.update(dt);
     this.mountain.update(dt, t);
     this.confetti.update(dt);
+    this.updateDust(dt);
     this.updateCamera(dt);
     this.updateHud();
     this.ctx.input.endFrame();
   }
 
   private tmpV = new THREE.Vector3();
+  private skyLow = new THREE.Color('#bfe9ff');
+  private skyHigh = new THREE.Color('#ffc9e0');
   private camTarget = new THREE.Vector3();
 
   private updateCamera(dt: number): void {
@@ -542,6 +590,10 @@ export class Peak implements Minigame {
     }
     this.camera.position.set(x, Math.max(0.5, cy), z);
     this.camera.lookAt(this.camTarget);
+    // the sky warms from day-blue to sunset as you climb
+    const u = clamp(p.y / this.mountain.summit.y, 0, 1);
+    (this.scene.background as THREE.Color).copy(this.skyLow).lerp(this.skyHigh, u);
+    (this.scene.fog as THREE.Fog).color.copy(this.scene.background as THREE.Color);
     // shadows follow the climber
     this.sun.position.set(p.x + 8, p.y + 16, p.z + 5);
     this.sun.target.position.copy(p);

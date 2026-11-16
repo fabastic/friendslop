@@ -1,7 +1,6 @@
 import * as THREE from 'three';
-import { toon } from '../core/toon.ts';
-import { Spring } from './rig.ts';
-import { gummy, makeWobble, buildTreat, treatFor, type Wobble } from './gummy.ts';
+import { jelly, toon } from '../core/toon.ts';
+import { Spring, Tentacle, SoftPoint, addWobble } from './rig.ts';
 
 /**
  * JellyFolk: little astronauts with an animal's head inside a glass bubble helmet, a puffy space
@@ -75,10 +74,11 @@ export type Species = string;
 export const SPECIES = ANIMALS.map((a) => ({ id: a.id, name: a.name, emoji: a.emoji, tint: a.fur }));
 export const JELLY_COLORS = ['#7b4dff', '#ff4fa3', '#22c4e8', '#3ccf7a', '#ffb020', '#ff5a4f'];
 
-export type CharState = 'idle' | 'aim' | 'windup' | 'release' | 'cheer' | 'flop' | 'sad' | 'sit' | 'strike' | 'dance' | 'scratch';
+export type CharState =
+  | 'idle' | 'aim' | 'windup' | 'release' | 'cheer' | 'flop' | 'sad' | 'sit' | 'strike' | 'dance' | 'scratch'
+  | 'walk' | 'jump' | 'fall' | 'climb' | 'wave';
 
-const TENT_LEN = 0.3; // hip height: the body sits on top of the legs
-const LEG_LEN = TENT_LEN;
+const TENT_LEN = 0.3; // body sits on top of the tentacles
 const BODY_H = 0.36; // torso height (neck sits here, in body space)
 
 /** Flat-shaded low-poly look: unindexed geometry with per-face normals. */
@@ -117,8 +117,7 @@ interface Kit {
   shoulderY: number;
   shoulderX: number;
   armLen: number;
-  /** the surprise set inside the jelly belly */
-  treat: THREE.Group;
+  helmet: { r: number; y: number };
 }
 
 export function animalSpec(id: string): AnimalSpec {
@@ -139,10 +138,7 @@ export class JellyFolk {
   private shoulderR = new THREE.Group();
   private shoulderL = new THREE.Group();
   private tail = new THREE.Group();
-  private legs: THREE.Group[] = [];
-  private wob: Wobble = makeWobble();
-  private treat = new THREE.Group();
-  private treatY = 0.16;
+  private legs: Tentacle[] = [];
   private eyes: THREE.Object3D[] = [];
   private ears: THREE.Object3D[] = [];
 
@@ -169,25 +165,58 @@ export class JellyFolk {
   private spin = 0;
   private sway = 0;
 
+  private lights: THREE.Mesh[] = [];
+
+  // ---- gummy soft body: mass points that lag behind the rig and wobble back
+  private softHead = new SoftPoint(150, 7, 0.0045, 0.09);
+  private softBelly = new SoftPoint(210, 9, 0.003, 0.07);
+  private softHandR = new SoftPoint(120, 6, 0.006, 0.12);
+  private softHandL = new SoftPoint(120, 6, 0.006, 0.12);
+  private wob = { uWob: { value: 0 }, uWobT: { value: 0 } };
+  private softArm: { r: THREE.Vector3; l: THREE.Vector3 } | null = null;
+  private tmpA = new THREE.Vector3();
+  private tmpB = new THREE.Vector3();
+  private tmpC = new THREE.Vector3();
+  private tmpQ = new THREE.Quaternion();
+  private lastWorld = new THREE.Vector3();
+  private lastVel = new THREE.Vector3();
+  private hasLast = false;
+  private accel = new THREE.Vector3();
+  private neckBase = new THREE.Vector3();
+  /** 0..1 how jelly-soft this character is (1 = default) */
+  wobble = 1;
+  /** horizontal speed the game moved us at (drives the walk cycle), m/s */
+  speed = 0;
+  private walkPhase = 0;
 
   constructor(species: Species, color: string = JELLY_COLORS[0]) {
     this.species = species;
     this.color = color;
-    const kit = buildKit(animalSpec(species), color, this.wob);
-    this.treat = kit.treat;
-    this.treat.position.y = this.treatY;
-    this.treat.scale.setScalar(1.15);
+    const kit = buildKit(animalSpec(species), color);
+    this.lights = kit.lights;
 
     this.root.add(this.hips);
     this.body.position.y = TENT_LEN;
     this.hips.add(this.body);
     kit.body.forEach((o) => this.body.add(o));
-    this.body.add(this.treat);
     this.neck.position.y = BODY_H;
     this.body.add(this.neck);
     kit.head.forEach((o) => this.neck.add(o));
     this.eyes = kit.eyes;
     this.ears = kit.ears;
+
+    // glass bubble helmet with a gold rim
+    const glassMat = jelly('#d8f3ff', { opacity: 0.2, glow: 0.04, rim: '#ffffff' });
+    const helm = mesh(ico(kit.helmet.r, 1), glassMat, 0, kit.helmet.y, 0);
+    helm.castShadow = false;
+    helm.renderOrder = 5;
+    helm.userData.noInk = true; // glass: a back-face outline would show through it
+    this.neck.add(helm);
+    const shine = mesh(new THREE.SphereGeometry(kit.helmet.r * 0.18, 8, 6), new THREE.MeshBasicMaterial({ color: '#ffffff', transparent: true, opacity: 0.85 }));
+    shine.position.set(-kit.helmet.r * 0.45, kit.helmet.y + kit.helmet.r * 0.55, kit.helmet.r * 0.6);
+    shine.scale.set(1, 0.6, 0.4);
+    deco(shine);
+    this.neck.add(shine);
 
     for (const [sh, sx, parts] of [[this.shoulderR, 1, kit.armR], [this.shoulderL, -1, kit.armL]] as const) {
       sh.position.set(kit.shoulderX * sx, kit.shoulderY, 0);
@@ -201,62 +230,35 @@ export class JellyFolk {
     kit.tail.forEach((o) => this.tail.add(o));
     this.body.add(this.tail);
 
-    // two stubby gummy legs with round candy feet
-    // two chunky moulded legs with a notch between them; pivot at the hip so they can walk
-    const legMat = gummy(color, this.wob, { clear: 0.55, wob: 0.6 });
-    const legGeo = gummySlab(roundedRect(0.115, LEG_LEN + 0.06, 0.05, -LEG_LEN), 0.1, 0.04);
-    for (const sx of [-1, 1]) {
-      const leg = new THREE.Group();
-      leg.position.set(sx * 0.07, LEG_LEN + 0.02, 0);
-      leg.add(mesh(legGeo, legMat));
-      leg.userData.side = sx;
-      this.hips.add(leg);
-      this.legs.push(leg);
+    // jellyfish tentacles in the player's colour
+    const tentMat = jelly(color, { opacity: 0.95, glow: 0.25 });
+    tentMat.transparent = false;
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+      const t = new Tentacle(TENT_LEN + 0.04, 0.042, 0.016, 4, tentMat);
+      t.mesh.position.set(Math.sin(a) * 0.11, TENT_LEN + 0.03, Math.cos(a) * 0.11);
+      t.mesh.rotation.y = a;
+      this.hips.add(t.mesh);
+      this.legs.push(t);
     }
-    this.mouldInColour(color, kit.eyes);
-  }
+    this.neckBase.copy(this.neck.position);
 
-  /**
-   * One-colour candy: every part becomes a shade of the player's gummy colour (features read as
-   * moulded bumps: light parts lighter, dark details deeper). The hidden treat keeps its colours.
-   */
-  private mouldInColour(color: string, eyes: THREE.Object3D[]): void {
-    const base = new THREE.Color(color);
-    const shades = {
-      base: gummy(base, this.wob, { clear: 0.6 }),
-      hi: gummy(base.clone().lerp(new THREE.Color('#ffffff'), 0.42), this.wob, { clear: 0.5, wob: 0.8 }),
-      // moulded features: same candy, just a touch deeper, so faces read as raised bumps
-      lo: gummy(base.clone().multiplyScalar(0.74), this.wob, { clear: 0.45, wob: 0.6, sugar: 0.4 }),
-      eye: gummy(base.clone().multiplyScalar(0.6), this.wob, { clear: 0.35, wob: 0.3, sugar: 0.2 }),
-    };
-    const eyeSet = new Set(eyes);
-    const old = new Set<THREE.Material>();
-    const lum = new THREE.Color();
+    // jelly ripple on every opaque toon surface of this character (suit, fur, tentacles)
     this.root.traverse((o) => {
-      if (!(o instanceof THREE.Mesh) || o.userData.treat) return;
-      const mat = o.material as THREE.Material & { color?: THREE.Color };
-      if ((mat as THREE.MeshBasicMaterial).isMeshBasicMaterial) return; // eye glints stay white
-      let pick: keyof typeof shades = 'base';
-      if (eyeSet.has(o)) pick = 'eye';
-      else if (mat.color) {
-        lum.copy(mat.color);
-        const l = 0.2126 * lum.r + 0.7152 * lum.g + 0.0722 * lum.b;
-        pick = l > 0.78 ? 'hi' : l < 0.12 ? 'eye' : l < 0.3 ? 'lo' : 'base';
-      }
-      if (mat !== shades[pick]) old.add(mat);
-      o.material = shades[pick];
+      const m = o as THREE.Mesh;
+      if (!m.isMesh || o.userData.noInk) return;
+      const mats = Array.isArray(m.material) ? m.material : [m.material];
+      for (const mat of mats) if ((mat as THREE.MeshToonMaterial).isMeshToonMaterial && !mat.transparent) addWobble(mat, this.wob);
     });
-    for (const m of old) if (!Object.values(shades).includes(m)) m.dispose();
   }
 
-  /** Ground speed (m/s) so the legs can walk; 0 when standing still. */
-  setMove(speed: number): void {
-    this.move = speed;
+  /** Landing / impact: squash the soft body (positive = downward slam). */
+  impact(strength: number): void {
+    this.softBelly.impulse(0, -strength * 1.4, 0);
+    this.softHead.impulse(0, -strength * 1.8, strength * 0.3);
+    this.softHandR.impulse(0, -strength * 1.5, 0);
+    this.softHandL.impulse(0, -strength * 1.5, 0);
   }
-
-  private move = 0;
-  private walkPh = 0;
-  private jig = 0;
 
 
   setState(s: CharState): void {
@@ -273,7 +275,7 @@ export class JellyFolk {
     this.headX.v += amount * 8;
     this.earSpring.v += amount * 30;
     this.tailSpring.v += amount * 20;
-    this.jig = Math.min(0.05, this.jig + Math.abs(amount) * 0.05); // whole-body jelly jiggle
+    for (const l of this.legs) l.whip(amount * 10, 0);
   }
 
   update(dt: number): void {
@@ -284,11 +286,52 @@ export class JellyFolk {
     const st = this.stateTime;
 
     let lean = 0, twist = 0, squash = 1 + Math.sin(t * 2.2) * 0.02, lift = Math.sin(t * 1.6) * 0.015;
-    let armR = 0.04 + Math.sin(t * 2.2) * 0.04, armL = 0.04 + Math.sin(t * 2.2 + 1) * 0.04;
-    let spreadR = 0.05, spreadL = 0.05; // arms rest against the sides, gummy-person style
+    let armR = 0.15 + Math.sin(t * 2.2) * 0.06, armL = 0.15 + Math.sin(t * 2.2 + 1) * 0.06;
+    let spreadR = 0.25, spreadL = 0.25;
     let legSplay = 0.3, legWave = 0.1, tailWag = 0.35, tailSpeed = 3;
+    let legStride = 0;
+
+    // walk cycle runs off real ground speed so feet never skate
+    const spd = Math.min(this.speed, 6);
+    this.walkPhase += dt * (4 + spd * 3.2) * (spd > 0.15 ? 1 : 0);
+    const wp = this.walkPhase;
 
     switch (this.state) {
+      case 'walk': {
+        const s = Math.min(1, spd / 4);
+        lean = 0.1 + s * 0.12;
+        lift = Math.abs(Math.sin(wp)) * 0.05 * s;
+        squash = 1 + Math.cos(wp * 2) * 0.05 * s;
+        armR = 0.2 + Math.sin(wp) * 0.9 * s;
+        armL = 0.2 - Math.sin(wp) * 0.9 * s;
+        twist = Math.sin(wp) * 0.16 * s;
+        this.sway = Math.sin(wp) * 0.07 * s;
+        legStride = s;
+        tailWag = 0.5; tailSpeed = 6 + s * 6;
+        break;
+      }
+      case 'jump':
+        lean = -0.1; squash = 1.14; armR = armL = 2.6; spreadR = spreadL = 0.55; legSplay = 0.05; legWave = 0.35; tailWag = 0.8; tailSpeed = 10;
+        break;
+      case 'fall': {
+        // arms windmill, tentacles flail upward
+        lean = 0.05; squash = 1.04;
+        armR = 2.2 + Math.sin(t * 16) * 0.7; armL = 2.2 + Math.cos(t * 16) * 0.7; spreadR = spreadL = 1.1;
+        legSplay = 0.75; legWave = 0.7; tailWag = 1; tailSpeed = 18;
+        break;
+      }
+      case 'climb': {
+        // hand-over-hand: arms alternate reaching up, body hugs the wall
+        const c = Math.sin(st * 7);
+        lean = 0.32; squash = 0.97;
+        armR = 2.7 + c * 0.45; armL = 2.7 - c * 0.45; spreadR = spreadL = 0.32;
+        lift = Math.abs(c) * 0.03;
+        legSplay = 0.55 + c * 0.25; legWave = 0.35; tailWag = 0.4; tailSpeed = 5;
+        break;
+      }
+      case 'wave':
+        armR = 2.9; spreadR = 0.4 + Math.sin(st * 14) * 0.35; armL = 0.2; twist = 0.15; squash = 1.02;
+        break;
       case 'aim':
         lean = 0.12; squash = 0.96; armR = 0.6; armL = 0.4; spreadL = 0.6;
         break;
@@ -376,7 +419,40 @@ export class JellyFolk {
     if (this.state !== 'strike') this.spin = 0;
     if (this.state !== 'dance') this.sway *= 0.9;
     if (this.state !== 'scratch') this.headZ.target = 0;
-    this.body.scale.set(1 / Math.sqrt(sq), sq, 1 / Math.sqrt(sq));
+    // ---- soft body: how the character itself is being moved through the world
+    this.root.updateMatrixWorld();
+    const wpos = this.tmpA.setFromMatrixPosition(this.root.matrixWorld);
+    if (this.hasLast && dt > 0) {
+      const vel = this.tmpB.copy(wpos).sub(this.lastWorld).divideScalar(dt);
+      // teleports / respawns are not accelerations
+      if (vel.length() < 25) {
+        this.accel.copy(vel).sub(this.lastVel).divideScalar(dt).clampLength(0, 140);
+        this.lastVel.copy(vel);
+      } else this.lastVel.set(0, 0, 0);
+      this.accel.applyQuaternion(this.tmpQ.setFromRotationMatrix(this.root.matrixWorld).invert());    }
+    this.lastWorld.copy(wpos);
+    this.hasLast = true;
+    const jig = Math.max(0, this.wobble);
+    const ac = this.tmpC.copy(this.accel).multiplyScalar(jig);
+    const hO = this.softHead.step(dt, ac);
+    const bO = this.softBelly.step(dt, ac);
+    const rO = this.softHandR.step(dt, ac);
+    const lO = this.softHandL.step(dt, ac);
+    this.accel.multiplyScalar(0.5); // one-frame impulses fade
+
+    // belly: volume-preserving squash/stretch + lean into the lag
+    const sqSoft = sq * (1 + bO.y * 3.2);
+    const side = 1 / Math.sqrt(Math.max(0.5, sqSoft));
+    this.body.scale.set(side * (1 + Math.abs(bO.x) * 1.2), sqSoft, side * (1 + Math.abs(bO.z) * 1.2));
+    this.body.position.set(bO.x * 0.6, TENT_LEN + bO.y * 0.5, bO.z * 0.6);
+    // head: stretchy neck, bobble lag
+    this.neck.position.set(this.neckBase.x + hO.x * 0.8, this.neckBase.y + hO.y * 0.9, this.neckBase.z + hO.z * 0.8);
+    this.neck.scale.set(1 - hO.y * 0.6, 1 + hO.y * 1.6, 1 - hO.y * 0.6);
+    // jelly ripple strength follows the wobble energy
+    const energy = this.softHead.energy + this.softBelly.energy;
+    this.wob.uWob.value += (Math.min(0.012, energy * 0.0045) * jig - this.wob.uWob.value) * Math.min(1, dt * 12);
+    this.wob.uWobT.value = t;
+    this.softArm = { r: rO, l: lO };
 
     // head lags behind body motion (bobblehead jiggle)
     const dLean = (leanX - this.prevLean) / dt;
@@ -392,10 +468,12 @@ export class JellyFolk {
     this.neck.rotation.x = this.headX.update(dt) * 0.6 + (this.state === 'sad' ? 0.25 : 0);
     this.neck.rotation.z = this.headZ.update(dt) * 0.5 + Math.sin(t * 1.3) * 0.03;
 
-    this.shoulderR.rotation.x = -this.sArmR.update(dt);
-    this.shoulderL.rotation.x = -this.sArmL.update(dt);
-    this.shoulderR.rotation.z = this.sSpreadR.update(dt);
-    this.shoulderL.rotation.z = -this.sSpreadL.update(dt);
+    // arms: animated pose + floppy soft-hand lag
+    const sa = this.softArm;
+    this.shoulderR.rotation.x = -this.sArmR.update(dt) + (sa ? sa.r.z * 6 - sa.r.y * 4 : 0);
+    this.shoulderL.rotation.x = -this.sArmL.update(dt) + (sa ? sa.l.z * 6 - sa.l.y * 4 : 0);
+    this.shoulderR.rotation.z = this.sSpreadR.update(dt) + (sa ? sa.r.x * 6 : 0);
+    this.shoulderL.rotation.z = -this.sSpreadL.update(dt) + (sa ? sa.l.x * 6 : 0);
 
     this.tail.rotation.y = Math.sin(t * tailSpeed) * tailWag + this.tailSpring.update(dt) * 0.3;
     this.tail.rotation.x = -0.4;
@@ -411,28 +489,16 @@ export class JellyFolk {
     const perk = Math.max(-0.05, ear);
     this.ears.forEach((e) => (e.rotation.z = (e.userData.baseZ ?? 0) + perk * 0.18 * (e.userData.perk ?? 1)));
 
-    // legs: waddle-walk with ground speed, splay for poses, tuck forward when sitting
-    const walk = Math.min(1, this.move / 3);
-    this.walkPh += dt * (6 + this.move * 3.2);
-    for (const leg of this.legs) {
-      const sx = leg.userData.side as number;
-      let swing = Math.sin(this.walkPh + (sx > 0 ? 0 : Math.PI)) * 0.75 * walk + Math.sin(t * 4 + sx) * legWave * 0.15;
-      let splay = sx * (legSplay - 0.3) * 0.5;
-      if (this.state === 'sit') {
-        swing = -1.35;
-        splay = sx * 0.12;
-      }
-      leg.rotation.x += (swing - leg.rotation.x) * Math.min(1, dt * 18);
-      leg.rotation.z += (splay - leg.rotation.z) * Math.min(1, dt * 12);
-    }
-    if (walk > 0.05) this.hips.rotation.z += Math.sin(this.walkPh) * 0.07 * walk; // side-to-side waddle
+    this.legs.forEach((leg, li) => {
+      // walking: tentacles take turns swinging forward/back like little jelly legs
+      const stride = legStride * Math.sin(wp + (li % 2) * Math.PI) * 0.6;
+      leg.pose(dt,
+        (i) => (i === 1 ? legSplay + stride : stride * 0.4) + Math.sin(t * 4 + leg.phase - i * 0.9) * legWave + (i === leg.bones.length - 1 ? 0.5 : 0),
+        (i) => Math.sin(t * 2.7 + leg.phase - i) * legWave * 0.5);
+    });
 
-    // jelly wobble energy: kicks + squash speed, decaying like a settling pudding
-    this.jig *= Math.exp(-dt * 3.2);
-    this.wob.time.value = t;
-    this.wob.amp.value = this.jig + Math.min(0.02, Math.abs(this.sSquash.v) * 0.0015) + walk * 0.004;
-    this.treat.rotation.y = t * 0.6;
-    this.treat.position.y = this.treatY + Math.sin(t * 1.7) * 0.012;
+    // suit lights twinkle
+    this.lights.forEach((l, i) => (l.visible = Math.sin(t * (2 + i * 0.7) + i) > -0.6));
 
     this.blinkIn -= dt;
     const blink = this.blinkIn < 0.12 && this.blinkIn > 0 ? 0.12 : 1;
@@ -448,116 +514,69 @@ export class JellyFolk {
 }
 
 
-// ---------------------------------------------------------------- gummy body + animal head
+// ---------------------------------------------------------------- astronaut body + animal head
+const SUIT = '#f6f3ff';
+const SUIT_SHADE = '#cfc8e8';
 
-/**
- * Moulded gummy slab: a 2D outline extruded with a fat soft bevel, so it has the flat-front,
- * pillowy-edge look of a gummy candy. Low segment counts keep it faceted/low poly.
- * The outline is centred on x, spans y 0..h, and is centred in depth.
- */
-function gummySlab(outline: THREE.Shape, depth: number, bevel: number): THREE.BufferGeometry {
-  const g = new THREE.ExtrudeGeometry(outline, {
-    depth,
-    bevelEnabled: true,
-    bevelThickness: bevel,
-    bevelSize: bevel * 0.85,
-    bevelSegments: 2,
-    curveSegments: 5,
-  });
-  g.translate(0, 0, -depth / 2);
-  return lp(g);
-}
-
-function roundedRect(w: number, h: number, r: number, y0 = 0, topW = w): THREE.Shape {
-  // trapezoid-ish rounded rectangle: bottom width w, top width topW
-  const s = new THREE.Shape();
-  const bx = w / 2;
-  const tx = topW / 2;
-  s.moveTo(-bx + r, y0);
-  s.lineTo(bx - r, y0);
-  s.quadraticCurveTo(bx, y0, bx, y0 + r);
-  s.lineTo(tx, y0 + h - r);
-  s.quadraticCurveTo(tx, y0 + h, tx - r, y0 + h);
-  s.lineTo(-tx + r, y0 + h);
-  s.quadraticCurveTo(-tx, y0 + h, -tx, y0 + h - r);
-  s.lineTo(-bx, y0 + r);
-  s.quadraticCurveTo(-bx, y0, -bx + r, y0);
-  return s;
-}
-
-/** Gummy-person torso: chunky slab, slightly narrower at the shoulders, belly bulge in depth. */
-function gummyTorso(): THREE.BufferGeometry {
-  const g = gummySlab(roundedRect(0.28, BODY_H - 0.04, 0.09, 0, 0.24), 0.12, 0.05);
-  // pillowy belly: push the front/back faces out a little in the middle
-  const p = g.attributes.position as THREE.BufferAttribute;
-  for (let i = 0; i < p.count; i++) {
-    const y = p.getY(i);
-    const z = p.getZ(i);
-    const u = y / BODY_H;
-    p.setZ(i, z * (1 + Math.sin(Math.min(1, Math.max(0, u)) * Math.PI) * 0.25));
-  }
-  g.computeVertexNormals();
-  return g;
-}
-
-/** Fluted jelly-mould torso: wide at the base, ribbed like a turned-out pudding, low poly. */
-export function puddingGeometry(): THREE.BufferGeometry {
-  const seg = 16;
-  const g = new THREE.CylinderGeometry(0.15, 0.2, BODY_H, seg, 3);
-  const p = g.attributes.position as THREE.BufferAttribute;
-  for (let i = 0; i < p.count; i++) {
-    const x = p.getX(i);
-    const y = p.getY(i);
-    const z = p.getZ(i);
-    const r = Math.hypot(x, z);
-    if (r < 1e-4) continue;
-    const ang = Math.atan2(z, x);
-    const u = (y + BODY_H / 2) / BODY_H; // 0 bottom .. 1 top
-    // ribs + a soft belly bulge + rounded shoulders
-    const k = (1 + Math.cos(ang * 8) * 0.07) * (1 + Math.sin(u * Math.PI) * 0.12) * (u > 0.85 ? 1 - (u - 0.85) * 1.6 : 1);
-    p.setX(i, (x / r) * r * k);
-    p.setZ(i, (z / r) * r * k * 0.92);
-  }
-  g.translate(0, BODY_H / 2, 0);
-  return lp(g);
-}
-
-function buildKit(a: AnimalSpec, color: string, w: Wobble): Kit {
-  const fur = gummy(a.fur, w, { clear: 0.45 });
-  const light = gummy(a.light, w, { clear: 0.35, wob: 0.8 });
+function buildKit(a: AnimalSpec, color: string): Kit {
+  const fur = flat(a.fur);
+  const light = flat(a.light, 0.3);
   const dark = flat(DARK, 0);
+  const suit = flat(SUIT, 0.45);
+  const suitShade = flat(SUIT_SHADE, 0.3);
+  const trim = flat(color, 0.25);
   const white = new THREE.MeshBasicMaterial({ color: '#ffffff' });
+  const helmetR = a.helmet ?? 0.27;
 
   const kit: Kit = {
     body: [], head: [], eyes: [], ears: [], armR: [], armL: [], tail: [], lights: [],
-    shoulderY: BODY_H - 0.06, shoulderX: 0.175, armLen: 0.19,
-    treat: new THREE.Group(),
+    shoulderY: BODY_H - 0.1, shoulderX: 0.18, armLen: 0.17,
+    helmet: { r: helmetR, y: 0.15 + (helmetR - 0.27) * 0.7 },
   };
   const B = kit.body;
   const H = kit.head;
 
-  // ---- gummy body: a fluted jelly-mould torso in the player's colour (like a turned-out pudding)
-  const torso = mesh(gummyTorso(), gummy(color, w, { clear: 0.7 }), 0, 0.02, 0);
-  // a soft gummy neck so head and body read as one moulded candy (jelly-baby style)
-  const neck = mesh(ico(0.13, 1), gummy(color, w, { clear: 0.6 }), 0, BODY_H - 0.02, 0);
-  neck.scale.set(1, 0.6, 0.92);
-  B.push(torso, neck);
+  // ---- space suit
+  const torso = mesh(ico(0.19, 1), suit, 0, 0.17, 0);
+  torso.scale.set(1.02, 1.0, 0.92);
+  const panel = mesh(lp(new THREE.BoxGeometry(0.13, 0.09, 0.04)), suitShade, 0, 0.19, 0.165);
+  panel.rotation.x = -0.15;
+  const btnCols = ['#ff5a4f', '#ffd23f', '#3ccf7a'];
+  btnCols.forEach((c, i) => {
+    const b = deco(mesh(new THREE.SphereGeometry(0.013, 8, 6), new THREE.MeshBasicMaterial({ color: c }), -0.035 + i * 0.035, 0.2, 0.19));
+    kit.lights.push(b);
+    B.push(b);
+  });
+  const badge = deco(mesh(new THREE.CircleGeometry(0.03, 12), trim, 0.1, 0.24, 0.148));
+  badge.rotation.y = 0.55;
+  const belt = mesh(lp(new THREE.TorusGeometry(0.178, 0.026, 4, 10)), trim, 0, 0.08, 0);
+  belt.rotation.x = Math.PI / 2;
+  const collar = mesh(lp(new THREE.TorusGeometry(0.155, 0.04, 5, 12)), trim, 0, BODY_H - 0.01, 0);
+  collar.rotation.x = Math.PI / 2;
+  const pack = mesh(lp(new THREE.BoxGeometry(0.22, 0.22, 0.09)), suitShade, 0, 0.2, -0.17);
+  const tankL = mesh(lp(new THREE.CylinderGeometry(0.035, 0.035, 0.2, 6)), trim, -0.07, 0.2, -0.225);
+  const tankR = mesh(lp(new THREE.CylinderGeometry(0.035, 0.035, 0.2, 6)), trim, 0.07, 0.2, -0.225);
+  const antenna = mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.2, 5), dark, 0.08, 0.38, -0.2);
+  const bulb = deco(mesh(new THREE.SphereGeometry(0.022, 10, 8), new THREE.MeshBasicMaterial({ color: '#ff5a4f' }), 0.08, 0.49, -0.2));
+  kit.lights.push(bulb);
+  B.push(torso, panel, badge, belt, collar, pack, tankL, tankR, antenna, bulb);
 
-  // the surprise inside: every animal has its own treat set into the jelly
-  kit.treat = buildTreat(treatFor(a.id));
+  // ---- arms: puffy suit sleeves, cuff in the player colour, round glove
+  for (const list of [kit.armR, kit.armL]) {
+    const sleeve = mesh(lp(new THREE.CapsuleGeometry(0.048, 0.08, 2, 6)), suit, 0, -0.07, 0);
+    const cuff = mesh(lp(new THREE.TorusGeometry(0.047, 0.014, 4, 8)), trim, 0, -0.13, 0);
+    cuff.rotation.x = Math.PI / 2;
+    const glove = mesh(ico(0.05, 0), suitShade, 0, -0.165, 0.01);
+    list.push(sleeve, cuff, glove);
+  }
 
-  // ---- arms: gummy limbs in the player colour, paws in the animal's colour
-  // arms: moulded slab limbs that rest against the body's sides (gummy-person pose)
-  const armGeo = gummySlab(roundedRect(0.075, 0.2, 0.037, -0.2), 0.05, 0.03);
-  for (const list of [kit.armR, kit.armL]) list.push(mesh(armGeo, gummy(color, w, { clear: 0.55, wob: 0.5 }), 0, 0.01, 0));
-
-  // ---- animal head (gummy, sits in the cream ruff)
+  // ---- animal head (inside the helmet, relative to the neck)
   const head = mesh(ico(0.17, 1), fur, 0, 0.15, 0);
   head.scale.set(1.12, 0.98, 1);
   H.push(head);
 
   // eyes
-  let eyeY = 0.19, eyeZ = 0.145, eyeR = 0.04; // big domed gummy eyes
+  let eyeY = 0.19, eyeZ = 0.15, eyeR = 0.03;
   if (a.extras.includes('frogeyes')) {
     eyeY = 0.29; eyeZ = 0.1; eyeR = 0.034;
     for (const sx of [-1, 1]) H.push(mesh(ico(0.068, 1), fur, sx * 0.085, 0.27, 0.04));
@@ -578,8 +597,8 @@ function buildKit(a: AnimalSpec, color: string, w: Wobble): Kit {
       patch.rotation.z = sx * 0.5;
       H.push(patch);
     }
-    const eye = mesh(ico(eyeR, 1), dark, sx * (a.extras.includes('frogeyes') ? 0.085 : 0.075), eyeY, eyeZ);
-    eye.scale.set(1, 1, 0.55); // shallow raised dome, moulded into the face
+    const eye = mesh(ico(eyeR, 0), dark, sx * (a.extras.includes('frogeyes') ? 0.085 : 0.075), eyeY, eyeZ);
+    eye.scale.set(0.9, 1.15, 0.7);
     const glint = deco(mesh(new THREE.SphereGeometry(eyeR * 0.3, 6, 4), white, eyeR * 0.3, eyeR * 0.4, eyeR * 0.75));
     eye.add(glint);
     H.push(eye);

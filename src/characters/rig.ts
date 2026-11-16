@@ -21,6 +21,72 @@ export class Spring {
 }
 
 
+/**
+ * Gummy soft-body point (shape matching, reduced to what a character needs): a mass hanging off
+ * the rig at a rest offset. The rig moving/accelerating drags it away from rest; a stiff, lightly
+ * damped spring pulls it back — the lag, stretch, squash-on-landing and snap-back wobble of jelly.
+ * Offsets are in the character's local space.
+ */
+export class SoftPoint {
+  readonly off = new THREE.Vector3();
+  readonly vel = new THREE.Vector3();
+  k: number;
+  c: number;
+  /** how strongly body acceleration drags this point (heavier = lags more) */
+  mass: number;
+  limit: number;
+  constructor(k = 160, c = 9, mass = 1, limit = 0.12) {
+    this.k = k;
+    this.c = c;
+    this.mass = mass;
+    this.limit = limit;
+  }
+  /** accel = the character's acceleration in its local space (m/s²). */
+  step(dt: number, accel: THREE.Vector3): THREE.Vector3 {
+    this.vel.x += (-this.k * this.off.x - this.c * this.vel.x - accel.x * this.mass) * dt;
+    this.vel.y += (-this.k * this.off.y - this.c * this.vel.y - accel.y * this.mass) * dt;
+    this.vel.z += (-this.k * this.off.z - this.c * this.vel.z - accel.z * this.mass) * dt;
+    this.off.addScaledVector(this.vel, dt);
+    if (this.off.length() > this.limit) {
+      this.off.setLength(this.limit);
+      this.vel.multiplyScalar(0.6);
+    }
+    return this.off;
+  }
+  impulse(x: number, y: number, z: number): void {
+    this.vel.x += x;
+    this.vel.y += y;
+    this.vel.z += z;
+  }
+  get energy(): number {
+    return this.off.length() * 8 + this.vel.length() * 0.35;
+  }
+}
+
+/**
+ * Jelly ripple on a toon material: vertices breathe along their normals with a travelling wave
+ * whose strength follows the soft body's energy. Chains any existing onBeforeCompile (hatching).
+ */
+export function addWobble(mat: THREE.Material, u: { uWob: { value: number }; uWobT: { value: number } }): void {
+  if (mat.userData.wobble) return;
+  mat.userData.wobble = true;
+  const prev = mat.onBeforeCompile;
+  const prevKey = mat.customProgramCacheKey?.bind(mat);
+  mat.onBeforeCompile = (sh, r) => {
+    prev?.call(mat, sh, r);
+    sh.uniforms.uWob = u.uWob;
+    sh.uniforms.uWobT = u.uWobT;
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform float uWob;\nuniform float uWobT;')
+      .replace(
+        '#include <begin_vertex>',
+        '#include <begin_vertex>\n  float wv = sin(position.y * 41.0 + uWobT * 23.0) * 0.6 + sin(position.x * 33.0 - uWobT * 17.0) * 0.4;\n  transformed += normal * wv * uWob;',
+      );
+  };
+  mat.customProgramCacheKey = () => `${prevKey ? prevKey() : ''}|wob`;
+  mat.needsUpdate = true;
+}
+
 /** Skinned tapered tube on a bone chain, posed by springs for follow-through. */
 export class Tentacle {
   readonly mesh: THREE.SkinnedMesh;

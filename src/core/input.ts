@@ -50,6 +50,13 @@ export class Input {
     return had;
   }
 
+  /** Virtual buttons (touch controls): hold/release a key code as if typed. */
+  setVirtual(code: string, down: boolean): void {
+    if (down && !this.keys.has(code)) this.pressed.add(code);
+    if (down) this.keys.add(code);
+    else this.keys.delete(code);
+  }
+
   /** Discard unconsumed presses so they can't fire in a later phase. */
   endFrame(): void {
     this.pressed.clear();

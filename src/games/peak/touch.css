@@ -1,0 +1,100 @@
+/* ================= Jelly Peak touch controls ================= */
+.pk-touch {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  pointer-events: none;
+  font-family: 'Fredoka', system-ui, sans-serif;
+  touch-action: none;
+}
+.pk-touch * { touch-action: none; }
+
+.pk-touch-stick {
+  position: absolute;
+  left: max(16px, env(safe-area-inset-left));
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.5);
+  border: 3px solid var(--ink);
+  box-shadow: 0 4px 0 var(--ink);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.pk-touch-knob {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--white);
+  border: 3px solid var(--ink);
+  box-shadow: 0 3px 0 var(--ink);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.pk-touch-pad {
+  position: absolute;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.pk-touch-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.pk-touch-btn {
+  pointer-events: auto;
+  touch-action: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  font-family: inherit;
+  font-weight: 700;
+  color: var(--ink);
+  background: var(--white);
+  border: 3px solid var(--ink);
+  border-radius: 50%;
+  box-shadow: 0 4px 0 var(--ink);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+}
+
+.pk-touch-btn.pressed {
+  transform: translateY(3px);
+  box-shadow: 0 1px 0 var(--ink);
+}
+
+.pk-touch-jump {
+  width: 88px;
+  height: 88px;
+  font-size: 18px;
+  background: var(--pink);
+  color: var(--white);
+}
+
+.pk-touch-climb {
+  width: 70px;
+  height: 70px;
+  font-size: 15px;
+  background: var(--yellow);
+}
+
+.pk-touch-small {
+  width: 56px;
+  height: 56px;
+  font-size: 13px;
+}
