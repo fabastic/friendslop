@@ -59,6 +59,7 @@ export class Hub {
   private unsub: () => void;
   private toastEl: HTMLElement;
   private busy = false;
+  private sawRunning = false;
 
   constructor(parent: HTMLElement, session: NetSession, cb: HubCallbacks) {
     this.session = session;
@@ -78,6 +79,12 @@ export class Hub {
       if (ev.e === 'error') this.toast(ev.text);
       if (ev.e === 'host-lost') this.toast('The party host left 😢');
       if (ev.e === 'msg' && ev.m.t === 'start' && !session.isHost) this.launch('bowling');
+      // leader went back to the hub: follow them so nobody is stranded in a finished game
+      if (ev.e === 'lobby' && !session.isHost && this.sawRunning && !session.gameRunning && this.root.classList.contains('hidden')) {
+        this.toast('The leader is back in the hub');
+        this.show();
+      }
+      this.sawRunning = session.gameRunning;
       this.renderParty();
     });
     this.render();
@@ -85,6 +92,10 @@ export class Hub {
 
   show(): void {
     this.root.classList.remove('hidden');
+    if (this.session.active && this.session.isHost && this.session.gameRunning) {
+      this.session.gameRunning = false; // leader is back in the hub: the room is free for a new game
+      this.session.broadcastLobby();
+    }
     this.friends.refresh();
     this.render();
   }
@@ -169,8 +180,16 @@ export class Hub {
         const g = GAMES.find((x) => x.id === b.dataset.id)!;
         if (!g.ready) return this.toast(`${g.title} is still in the jelly mould 🍮`);
         if (this.session.active && !this.session.isHost) return this.toast('Only the party leader picks the game');
-        if (this.session.active) this.session.send({ t: 'start', configs: this.session.configs() });
-        this.launch(g.id);
+        if (this.session.active) {
+          this.session.send({ t: 'start', configs: this.session.configs() });
+          this.session.gameRunning = true;
+          this.session.broadcastLobby();
+        }
+        b.classList.add('launching');
+        window.setTimeout(() => {
+          b.classList.remove('launching');
+          this.launch(g.id);
+        }, 420);
       };
     });
   }
@@ -188,31 +207,43 @@ export class Hub {
     if (!el) return;
     const s = this.session;
     if (!s.active) {
-      el.innerHTML = `
+      const html = `
         <h3>Party</h3>
         <p class="hub-muted">Play online with up to 4 friends. Share the code or invite from your friends list.</p>
-        <button class="hub-btn primary hp-create"${this.busy ? ' disabled' : ''}>${this.busy ? 'Connecting…' : '🎉 Start a party'}</button>
-        <div class="hub-row"><input class="hp-code" maxlength="5" placeholder="CODE" aria-label="Party code"><button class="hub-btn hp-join"${this.busy ? ' disabled' : ''}>Join</button></div>`;
-      (el.querySelector('.hp-create') as HTMLButtonElement).onclick = () => this.wrap(s.host(this.profile));
-      const code = el.querySelector('.hp-code') as HTMLInputElement;
-      code.oninput = () => (code.value = normalizeCode(code.value));
-      (el.querySelector('.hp-join') as HTMLButtonElement).onclick = () => {
-        if (code.value.length < 5) return this.toast('Codes are 5 letters');
-        this.wrap(s.join(code.value, this.profile));
-      };
+        <button class="hub-btn primary hp-create"${this.busy ? ' disabled' : ''}>${this.busy ? '<span class="hub-spin"></span> Connecting…' : '🎉 Start a party'}</button>
+        <div class="hub-row"><input class="hp-code" maxlength="5" placeholder="CODE" aria-label="Party code"${this.busy ? ' disabled' : ''}><button class="hub-btn hp-join"${this.busy ? ' disabled' : ''}>Join</button></div>
+        ${this.busy ? '<p class="hub-muted hp-wait">Finding the room… this can take up to 20 s on mobile data.</p>' : ''}`;
+      rerender(el, html, () => {
+        (el.querySelector('.hp-create') as HTMLButtonElement).onclick = () => this.wrap(s.host(this.profile));
+        const code = el.querySelector('.hp-code') as HTMLInputElement;
+        code.oninput = () => (code.value = normalizeCode(code.value));
+        const join = () => {
+          if (code.value.length < 5) return this.toast('Codes are 5 letters');
+          this.wrap(s.join(code.value, this.profile));
+        };
+        code.onkeydown = (e) => e.key === 'Enter' && join();
+        (el.querySelector('.hp-join') as HTMLButtonElement).onclick = join;
+      });
       return;
     }
-    el.innerHTML = `
+    const html = `
       <h3>Party <span class="hp-badge">${s.isHost ? 'Leader' : 'Member'}</span></h3>
       <button class="hp-codebig" title="Copy code">${s.code}<small>tap to copy</small></button>
       <ul class="hp-list">${s.players.map((p) => {
         const sp = SPECIES.find((x) => x.id === p.species) ?? SPECIES[0];
         return `<li style="--pc:${p.color}"><span class="hub-avatar sm">${sp.emoji}</span>${esc(p.name)}${p.seat === 0 ? ' 👑' : ''}${p.seat === s.mySeat ? ' <i>(you)</i>' : ''}</li>`;
       }).join('')}${'<li class="empty">waiting for a friend…</li>'.repeat(Math.max(0, 4 - s.players.length))}</ul>
-      <div class="hp-chat">${s.chat.slice(-5).map((c) => `<p><b>${esc(c.name)}:</b> ${esc(c.text)}</p>`).join('')}</div>
+      <div class="hp-chat">${s.chat.slice(-8).map((c) => `<p><b>${esc(c.name)}:</b> ${esc(c.text)}</p>`).join('') || '<p class="hub-muted">No messages yet</p>'}</div>
       <div class="hub-row"><input class="hp-say" maxlength="140" placeholder="Say hi…" aria-label="Chat message"><button class="hub-btn hp-send">Send</button></div>
-      <p class="hub-muted">${s.isHost ? 'Pick a game to start for everyone.' : 'The leader picks the game.'}</p>
+      <p class="hub-muted">${s.gameRunning && !s.isHost ? '🎳 A game is running — you\'ll join the next one.' : s.isHost ? 'Pick a game to start for everyone.' : 'The leader picks the game.'}</p>
       <button class="hub-btn ghost hp-leave">Leave party</button>`;
+    rerender(el, html, () => this.bindParty(el));
+    const chat = el.querySelector('.hp-chat');
+    if (chat) chat.scrollTop = chat.scrollHeight;
+  }
+
+  private bindParty(el: HTMLElement): void {
+    const s = this.session;
     (el.querySelector('.hp-codebig') as HTMLButtonElement).onclick = () => {
       void navigator.clipboard?.writeText(s.code).catch(() => {});
       this.toast('Code copied!');
@@ -247,7 +278,7 @@ export class Hub {
     if (!el) return;
     const f = this.friends;
     const inParty = this.session.active;
-    el.innerHTML = `
+    const html = `
       <h3>Friends <span class="hub-muted">${f.list.filter((x) => x.online).length} online</span></h3>
       <p class="hub-muted">Your friend code: <button class="hf-mycode" title="Copy">${f.myCode}</button></p>
       <ul class="hf-list">${f.list.length ? f.list.map((x) => `
@@ -258,6 +289,11 @@ export class Hub {
           <button class="hf-x" data-c="${x.code}" aria-label="Remove ${esc(x.name)}">×</button>
         </li>`).join('') : '<li class="empty">No friends yet — swap codes!</li>'}</ul>
       <div class="hub-row"><input class="hf-code" maxlength="7" placeholder="Friend code" aria-label="Friend code"><button class="hub-btn hf-add">Add</button></div>`;
+    rerender(el, html, () => this.bindFriends(el));
+  }
+
+  private bindFriends(el: HTMLElement): void {
+    const f = this.friends;
     (el.querySelector('.hf-mycode') as HTMLButtonElement).onclick = () => {
       void navigator.clipboard?.writeText(f.myCode).catch(() => {});
       this.toast('Friend code copied!');
@@ -265,6 +301,7 @@ export class Hub {
     const code = el.querySelector('.hf-code') as HTMLInputElement;
     (el.querySelector('.hf-add') as HTMLButtonElement).onclick = () => {
       const err = f.add(code.value, 'Friend');
+      if (!err) code.value = '';
       this.toast(err ?? 'Friend added! Checking if they\'re online…');
     };
     el.querySelectorAll<HTMLButtonElement>('.hf-inv').forEach((b) => (b.onclick = () => {
@@ -296,6 +333,33 @@ export class Hub {
     void this.toastEl.offsetWidth;
     this.toastEl.classList.add('in');
   }
+}
+
+/**
+ * Re-render a panel without the jank: typed text, focus and caret survive, and only a
+ * genuinely new layout gets the entrance animation.
+ */
+function rerender(el: HTMLElement, html: string, bind: () => void): void {
+  if (el.dataset.html === html) return; // nothing changed
+  const values = new Map<string, string>();
+  el.querySelectorAll<HTMLInputElement>('input').forEach((i) => values.set(i.className, i.value));
+  const active = document.activeElement as HTMLInputElement | null;
+  const focusCls = active && el.contains(active) ? active.className : '';
+  const caret = focusCls ? active!.selectionStart : null;
+  const first = !el.dataset.html;
+  el.dataset.html = html;
+  el.innerHTML = html;
+  el.classList.toggle('settled', !first);
+  el.querySelectorAll<HTMLInputElement>('input').forEach((i) => {
+    const v = values.get(i.className);
+    if (v !== undefined) i.value = v;
+  });
+  if (focusCls) {
+    const f = el.querySelector<HTMLInputElement>(`input[class="${focusCls}"]`);
+    f?.focus();
+    if (f && caret !== null) f.setSelectionRange(caret, caret);
+  }
+  bind();
 }
 
 function esc(s: string): string {

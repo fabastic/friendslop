@@ -12,6 +12,7 @@ import {
   type ChatLine, type LobbyPlayer, type NetMsg, type StartConfig,
 } from './protocol.ts';
 import { VoiceLink } from './voice.ts';
+import { PEER_OPTS } from './ice.ts';
 
 export type SessionEvent =
   | { e: 'lobby' } // players / running / chat changed
@@ -24,7 +25,7 @@ export type SessionEvent =
 type Handler = (ev: SessionEvent) => void;
 
 const HOST_PREFIX = 'jb';
-const JOIN_TIMEOUT_MS = 12_000;
+const JOIN_TIMEOUT_MS = 20_000; // TURN-relayed links can take a while to come up
 
 export class NetSession {
   active = false;
@@ -70,7 +71,7 @@ export class NetSession {
     const Peer = (await import('peerjs')).default;
     for (let attempt = 0; attempt < 5; attempt++) {
       const code = makeCode();
-      const peer = new Peer(HOST_PREFIX + code);
+      const peer = new Peer(HOST_PREFIX + code, PEER_OPTS);
       const ok = await new Promise<boolean>((resolve) => {
         const onOpen = () => {
           cleanup();
@@ -113,7 +114,7 @@ export class NetSession {
     if (this.active) this.teardown();
     this.gotLobby = false;
     const Peer = (await import('peerjs')).default;
-    const peer = new Peer();
+    const peer = new Peer(PEER_OPTS);
     const ok = await new Promise<boolean>((resolve) => {
       const onOpen = () => {
         cleanup();
@@ -317,6 +318,11 @@ export class NetSession {
       return;
     }
     if (m.t === 'hello') return;
+    if (m.t === 'chat') {
+      this.pushChat(m.seat, m.text); // keep the guest's history in step (the hub reads it)
+      this.emit({ e: 'lobby' });
+    }
+    if (m.t === 'start' || m.t === 'again') this.gameRunning = true;
     this.emit({ e: 'msg', m });
   }
 

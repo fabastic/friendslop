@@ -1,4 +1,16 @@
 /* ================= game hub ================= */
+.hub-panel.settled .hp-list li, .hub-panel.settled .hf-list li { animation: none; }
+.hub-panel { transition: box-shadow .2s, transform .2s; }
+.hub-panel:focus-within { transform: translateY(-2px); box-shadow: 0 8px 0 var(--ink); }
+.hub-spin { display: inline-block; width: 14px; height: 14px; vertical-align: -2px; border: 3px solid rgba(255,255,255,.5); border-top-color: #fff; border-radius: 50%; animation: hubSpin .7s linear infinite; }
+@keyframes hubSpin { to { transform: rotate(360deg); } }
+.hp-wait { animation: hubPulse 1.4s ease-in-out infinite; }
+@keyframes hubPulse { 50% { opacity: .35; } }
+.hub-game.launching { animation: hubLaunch .45s cubic-bezier(.5, 0, .7, .4) forwards; z-index: 2; }
+@keyframes hubLaunch { 30% { transform: scale(.94, 1.06); } to { transform: scale(1.5); opacity: 0; } }
+.hub { scroll-behavior: smooth; }
+.hub-games .hub-game:focus-visible, .hub-btn:focus-visible { outline: 3px solid var(--cyan); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { .hub *, .hub { animation: none !important; transition: none !important; } }
 .hub { position: fixed; inset: 0; z-index: 50; overflow-y: auto; color: var(--ink);
   background: radial-gradient(circle at 20% 10%, #ffe1f0 0, transparent 45%), radial-gradient(circle at 85% 80%, #d8f6ff 0, transparent 50%), linear-gradient(160deg, #fff4e0, #f6e6ff);
   transition: opacity .35s, transform .35s; }

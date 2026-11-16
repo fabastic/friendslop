@@ -4,6 +4,7 @@
  */
 import type { DataConnection, Peer as PeerType } from 'peerjs';
 import { makeCode } from '../net/protocol.ts';
+import { PEER_OPTS } from '../net/ice.ts';
 
 export interface Friend {
   code: string;
@@ -66,7 +67,7 @@ export class Friends {
 
   async start(): Promise<void> {
     const Peer = (await import('peerjs')).default;
-    const peer = new Peer(PREFIX + this.myCode);
+    const peer = new Peer(PREFIX + this.myCode, PEER_OPTS);
     this.peer = peer;
     peer.on('connection', (c) => this.onIncoming(c));
     peer.on('error', () => {});
