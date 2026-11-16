@@ -721,6 +721,13 @@ export class Peak implements Minigame {
       this.hint(this.camLocked ? "Free camera: drag or Q/F to look, it stays put (C to unlock)" : "Follow camera: swings back behind you as you walk (C for free camera)", 3);
     }
     this.lookYaw = Math.atan2(Math.sin(this.lookYaw), Math.cos(this.lookYaw)); // keep it the short way round
+    // the climber turns to face wherever the camera looks (camera yaw stays continuous);
+    // not while clinging to a wall, where facing is the wall's
+    if (!this.climbing && this.lookYaw !== 0) {
+      this.heading += this.lookYaw;
+      this.facing = this.heading;
+      this.lookYaw = 0;
+    }
     const walking = Math.hypot(this.vel.x, this.vel.z) > 0.6 || this.climbing;
     if (!this.dragLast && !this.camLocked && walking && !kk.has("KeyQ") && !kk.has("KeyF")) this.lookYaw *= Math.exp(-dt * 1.6);
     const behind = this.facing + Math.PI + this.lookYaw;
