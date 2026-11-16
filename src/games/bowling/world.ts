@@ -632,9 +632,9 @@ export function createPinBody(R: typeof RAPIER, world: RAPIER.World, p: THREE.Ve
 }
 
 // ---------------------------------------------------------------- abstract candy scenery
-const SCENE_PALETTE = ['#ff6fae', '#5fd0ff', '#ffcf3f', '#8be36b', '#b78cff', '#ff8b4d', '#5ef2c2', '#ff8fd0'];
+export const SCENE_PALETTE = ['#ff6fae', '#5fd0ff', '#ffcf3f', '#8be36b', '#b78cff', '#ff8b4d', '#5ef2c2', '#ff8fd0'];
 
-function starGeometry(r: number, depth: number): THREE.BufferGeometry {
+export function starGeometry(r: number, depth: number): THREE.BufferGeometry {
   const s = new THREE.Shape();
   for (let i = 0; i < 10; i++) {
     const a = (i / 10) * Math.PI * 2 + Math.PI / 2;
