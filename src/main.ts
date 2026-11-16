@@ -20,6 +20,10 @@ async function boot(): Promise<void> {
   const sfx = new Sfx();
 
   const net = new NetSession();
+  // closing the tab says goodbye right away instead of waiting for WebRTC to time out
+  window.addEventListener('pagehide', () => {
+    if (net.active) net.leave();
+  });
   let current: Minigame | null = null;
   let currentId = 'bowling';
 

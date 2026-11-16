@@ -46,11 +46,36 @@ export class Engine {
       this.frame(dt);
     };
     this.raf = requestAnimationFrame(tick);
+    // Browsers stop rAF in hidden tabs/minimised windows. Keep simulating there (no rendering)
+    // so an online game keeps running on every player's screen, not just the focused one.
+    this.bgTimer = window.setInterval(() => {
+      if (!this.running) return;
+      const now = performance.now();
+      // only take over when rAF has actually stalled (hidden tab, minimised or covered window)
+      if (now - this.last < 250) return;
+      let left = Math.min((now - this.last) / 1000, 2);
+      this.last = now;
+      const g = this.game;
+      if (!g) return;
+      while (left > 0) {
+        const dt = Math.min(left, 0.1);
+        left -= dt;
+        this.acc += dt;
+        while (this.acc >= FIXED_DT) {
+          g.fixedUpdate(FIXED_DT);
+          this.acc -= FIXED_DT;
+        }
+        g.update(dt, 0);
+      }
+    }, 200);
   }
+
+  private bgTimer = 0;
 
   stop(): void {
     this.running = false;
     cancelAnimationFrame(this.raf);
+    window.clearInterval(this.bgTimer);
   }
 
   /** Advance one rendered frame of real time. */

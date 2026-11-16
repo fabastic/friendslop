@@ -376,3 +376,22 @@ html, body {
 .pause-btn { width: 40px; height: 40px; padding: 0; display: grid; place-items: center; border-radius: 50%; }
 .pause-icon { display: flex; gap: 4px; align-items: center; justify-content: center; }
 .pause-icon i { display: block; width: 4px; height: 14px; border-radius: 2px; background: var(--ink); }
+
+/* ---------- pin-leave card ---------- */
+.leave-card { position: fixed; right: 16px; top: 50%; z-index: 20; transform: translateY(-50%); display: flex; flex-direction: column; align-items: center; gap: 4px;
+  max-width: min(220px, calc(100vw - 32px)); padding: 12px 16px; text-align: center; background: var(--white); border: 3px solid var(--ink); border-radius: 22px; box-shadow: 0 6px 0 var(--ink);
+  animation: lcIn .45s cubic-bezier(.3, 1.7, .5, 1) both; pointer-events: none; }
+.leave-card.split { background: #e8fbff; }
+.leave-card.out { animation: lcOut .35s ease-in both; }
+.leave-card b { font-size: 20px; color: var(--pink); -webkit-text-stroke: .5px var(--ink); }
+.leave-card span { font-size: 13px; opacity: .75; }
+.lc-pins { display: flex; flex-direction: column; gap: 4px; margin-bottom: 4px; }
+.lc-pins div { display: flex; justify-content: center; gap: 6px; }
+.lc-pins i { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; font-style: normal; font-size: 11px; font-weight: 700;
+  background: #ddd6ea; color: rgba(42, 27, 74, .35); border: 2px solid rgba(42, 27, 74, .2); animation: lcDrop .4s calc(var(--k) * 30ms) both; }
+.lc-pins i.up { background: #fff; color: var(--ink); border-color: var(--ink); animation: lcBob 1s calc(var(--k) * 60ms) ease-in-out infinite; }
+@keyframes lcIn { from { opacity: 0; transform: translate(60px, -50%) scale(.6) rotate(8deg); } }
+@keyframes lcOut { to { opacity: 0; transform: translate(60px, -50%) scale(.7); } }
+@keyframes lcDrop { from { transform: translateY(-8px) rotate(-90deg); opacity: 0; } }
+@keyframes lcBob { 50% { transform: translateY(-3px) scale(1.08, .92); } }
+@media (max-width: 600px) { .leave-card { top: auto; bottom: 90px; transform: none; right: 50%; translate: 50% 0; } }

@@ -34,6 +34,8 @@ export interface ThrowMsg {
   sb: number;
   /** Bitmask of pins still in play at release (the thrower's view). */
   act: number;
+  /** Sender's peer id (seats renumber when someone leaves; peer ids don't). */
+  pid?: string;
 }
 
 export type NetMsg =
@@ -45,17 +47,17 @@ export type NetMsg =
   | { t: 'start'; configs: StartConfig[] }
   | ThrowMsg
   /** bowler → everyone: authoritative pin outcome of their roll. */
-  | { t: 'roll'; seat: number; mask: number }
+  | { t: 'roll'; seat: number; mask: number; pid?: string }
   /** bowler → everyone: throttled aim state so peers can show the bowler (and get shoved). */
-  | { t: 'aim'; seat: number; x: number; aim: number; spin: number; skin: number }
+  | { t: 'aim'; seat: number; x: number; aim: number; spin: number; skin: number; pid?: string }
   /** roamer → everyone: throttled free-roam position. */
-  | { t: 'roam'; seat: number; x: number; z: number; ry: number; y: number }
+  | { t: 'roam'; seat: number; x: number; z: number; ry: number; y: number; pid?: string }
   /** host → everyone: close the round leaderboard and start the next round. */
   | { t: 'continue' }
   /** host → everyone: final board → new game with the current room line-up. */
   | { t: 'again'; configs: StartConfig[] }
   /** host → everyone: a player left mid-game; splice them out of the rotation. */
-  | { t: 'remove'; seat: number; name: string; restartTurn: boolean; endGame: boolean }
+  | { t: 'remove'; seat: number; name: string; restartTurn: boolean; endGame: boolean; pid?: string }
   /** guest → host (host relays to everyone, keeping history). */
   | { t: 'chat'; seat: number; text: string }
   /** anyone → everyone (direct). */

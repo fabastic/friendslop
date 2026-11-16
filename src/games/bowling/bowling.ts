@@ -16,6 +16,7 @@ import { frameMarks, gameStatus, provisionalScore, scoreGame } from './scoring.t
 import { Reactions } from './reactions.ts';
 import { makeCandyBench, GUTTER_W, PIN_SPACING, type Arena, type Reaction } from './world.ts';
 import type { NetMsg, ThrowMsg } from '../../net/protocol.ts';
+import { classifyLeave, pinNumbers, type Leave } from './leaves.ts';
 import type { SessionEvent } from '../../net/session.ts';
 import { BallHub, makeBallMesh, randomSkins, setBallSkin, useBallModel, type BallSkin } from './balls.ts';
 
@@ -51,6 +52,8 @@ interface RoamState {
   ry: number;
   y: number;
   vy: number;
+  /** visual waddle bob while walking (not simulated) */
+  bob?: number;
 }
 
 interface Player extends PlayerConfig {
@@ -64,6 +67,12 @@ interface Player extends PlayerConfig {
   body?: RAPIER.RigidBody;
   /** last aim state received from this player while they were the bowler */
   netAim?: { x: number; aim: number; spin: number; skin: number };
+  /** online: latest roam position received for this (remote) player */
+  netRoam?: { x: number; z: number; ry: number; y: number };
+  /** being yanked onto the approach for their turn (0..1) */
+  pull?: { from: THREE.Vector3; t: number };
+  /** offline bench AI: sit for a while, wander about, hop */
+  ai?: { mode: 'sit' | 'walk'; timer: number; tx: number; tz: number };
 }
 
 export interface ThrowParams {
@@ -185,7 +194,8 @@ export class Bowling implements Minigame {
     const ballModel = fitModel('keatura-bowling.glb', (n) => n.startsWith('Cube_bowling'), BALL_R * 2, { by: 'max' });
     ballModel?.geometry.translate(0, -BALL_R, 0);
     useBallModel(ballModel);
-    const skins = randomSkins(5);
+    // online rooms share one seeded ball set so a skin index means the same ball everywhere
+    const skins = ctx.net.active ? randomSkins(5, 20261116) : randomSkins(5);
     this.skins = skins;
     this.hub = new BallHub(this.scene, skins);
     this.ballMesh = makeBallMesh(skins[0]);
@@ -226,51 +236,92 @@ export class Bowling implements Minigame {
     if (net.active && net.players.length > 0) {
       // Online party: line-up = room seat order, no local setup screen.
       this.online = true;
-      this.myIndex = net.players.findIndex((p) => p.seat === net.mySeat);
+      this.pids = net.players.map((p) => p.peerId);
       this.unsub.push(net.on((ev) => this.onNet(ev)));
+      // heartbeat on a timer (not the render loop) so a backgrounded tab still counts as present
+      const hb = window.setInterval(() => this.sendRoam(), 1000);
+      this.unsub.push(() => window.clearInterval(hb));
       this.startGame(net.players.map((p) => ({ name: p.name, species: p.species as Species, color: p.color })));
     } else this.showSetup();
   }
 
   // ---------------------------------------------------------------- online
   private online = false;
-  private myIndex = -1;
+  /** Peer id per player index (stable across seat renumbering when someone leaves). */
+  private pids: string[] = [];
   private pendingThrow: ThrowMsg | null = null;
   private remoteMask: number | null = null;
   private aimSendT = 0;
+  private roamSendT = 0;
+  private lastHeard = new Map<string, number>();
+
+  private sendRoam(): void {
+    const me = this.players[this.myIndex];
+    if (!me) return;
+    const r = me.roam ?? { x: me.char.root.position.x, z: me.char.root.position.z, ry: Math.PI, y: 0 };
+    this.ctx.net.send({ t: 'roam', seat: this.ctx.net.mySeat, x: r.x, z: r.z, ry: r.ry, y: r.y, pid: this.myPid });
+  }
+
+  private get myPid(): string {
+    return this.ctx.net.myPeerId;
+  }
+
+  /** Index of the player I control online (-1 offline). */
+  private get myIndex(): number {
+    return this.online ? this.pids.indexOf(this.myPid) : -1;
+  }
 
   /** Offline: always. Online: only when the current bowler is me. */
   private get myTurn(): boolean {
     return !this.online || this.cur === this.myIndex;
   }
 
-  private seatOf(index: number): number {
-    return this.ctx.net.players[index]?.seat ?? index;
-  }
-
   private onNet(ev: SessionEvent): void {
+    const net = this.ctx.net;
     if (ev.e === 'host-lost') {
       this.ctx.hud.banner('Party ended', 1800, '#b9a3ff');
       this.online = false;
       this.ctx.exitToHub();
       return;
     }
+    if (ev.e === 'gone') {
+      // host decides: drop the leaver from everyone's game
+      const i = this.pids.indexOf(ev.player.peerId);
+      if (i < 0) return;
+      net.send({ t: 'remove', seat: i, name: ev.player.name, restartTurn: i === this.cur, endGame: false, pid: ev.player.peerId });
+      this.removePlayer(ev.player.peerId, ev.player.name);
+      return;
+    }
     if (ev.e !== 'msg') return;
     const m: NetMsg = ev.m;
-    const bowlerSeat = this.seatOf(this.cur);
+    if ('pid' in m && m.pid) this.lastHeard.set(m.pid, performance.now());
+    const bowlerPid = this.pids[this.cur];
     switch (m.t) {
       case 'throw':
-        if (m.seat !== this.ctx.net.mySeat) this.pendingThrow = m;
+        if (m.pid !== this.myPid) this.pendingThrow = m;
         break;
       case 'roll':
-        if (m.seat !== this.ctx.net.mySeat) this.remoteMask = m.mask;
+        if (m.pid !== this.myPid) this.remoteMask = m.mask;
         break;
       case 'aim':
-        if (m.seat === bowlerSeat && !this.myTurn && this.phase === 'aiming') {
+        if (m.pid === bowlerPid && !this.myTurn && this.phase === 'aiming') {
           this.posX = m.x;
           this.aim = m.aim;
           this.spin = m.spin;
+          const skin = this.skins[m.skin];
+          if (skin && this.heldSkin !== skin) {
+            this.heldSkin = skin;
+            setBallSkin(this.ballMesh, skin);
+          }
         }
+        break;
+      case 'roam': {
+        const p = this.players[this.pids.indexOf(m.pid ?? '')];
+        if (p && p !== this.players[this.myIndex]) p.netRoam = { x: m.x, z: m.z, ry: m.ry, y: m.y };
+        break;
+      }
+      case 'remove':
+        if (m.pid) this.removePlayer(m.pid, m.name);
         break;
       case 'continue':
         if (this.phase === 'board') this.continueFromBoard();
@@ -278,12 +329,43 @@ export class Bowling implements Minigame {
     }
   }
 
+  /** Someone left the party mid-game: take them out of the rotation without stalling the lane. */
+  private removePlayer(pid: string, name: string): void {
+    const i = this.pids.indexOf(pid);
+    if (i < 0) return;
+    const gone = this.players[i];
+    this.scene.remove(gone.char.root);
+    disposeObject(gone.char.root);
+    this.players.splice(i, 1);
+    this.pids.splice(i, 1);
+    this.config.splice(i, 1);
+    this.ctx.hud.banner(`${name} left 👋`, 1600, '#b9a3ff');
+    if (this.players.length === 0) return this.ctx.exitToHub();
+    this.players.forEach((p, k) => (p.seat = this.seats[k % this.seats.length]));
+    const wasBowling = i === this.cur;
+    if (i < this.cur) this.cur--;
+    if (wasBowling) {
+      this.pendingThrow = null;
+      this.remoteMask = null;
+      this.ball.setEnabled(false);
+      this.heldSkin = null;
+      if (this.cur >= this.players.length) this.cur = 0;
+      if (this.phase !== 'board' && this.phase !== 'over') this.startTurn();
+    }
+    this.renderScorebar();
+  }
+
   /** Replay a peer's throw once our flow has reached their aiming phase. */
   private applyPendingThrow(): void {
     const t = this.pendingThrow;
     if (!t || this.phase !== 'aiming' || this.myTurn) return;
-    if (t.seat !== this.seatOf(this.cur)) return;
+    if (t.pid !== this.pids[this.cur]) return;
     this.pendingThrow = null;
+    const skin = this.skins[t.skin];
+    if (skin) {
+      this.heldSkin = skin;
+      setBallSkin(this.ballMesh, skin);
+    }
     // reconcile which pins are in play with the thrower's view
     for (const pin of this.pins) {
       const want = (t.act & (1 << pin.idx)) !== 0;
@@ -319,8 +401,95 @@ export class Bowling implements Minigame {
     this.cur = 0;
   }
 
-  /** Line-up preview during setup, then bowler on the approach and the rest on the benches. */
-  private placePlayers(): void {
+  // ---------------------------------------------------------------- pin-leave gags
+  private pinNo: number[] = [];
+  private gag: { leave: Leave; t: number; pins: Pin[] } | null = null;
+  private leaveCard: HTMLElement | null = null;
+
+  /** After a first ball leaves 1–9 pins: name the pattern and have the survivors act it out. */
+  private startLeaveGag(standing: Pin[]): void {
+    if (!this.pinNo.length) this.pinNo = pinNumbers(this.pins.map((p) => p.home));
+    const leave = classifyLeave(standing.map((p) => this.pinNo[p.idx]));
+    if (!leave) return;
+    this.gag = { leave, t: 0, pins: standing };
+    // pin diagram card: survivors bright, fallen faded
+    this.leaveCard?.remove();
+    const card = this.ctx.hud.el('div', `leave-card${leave.split ? ' split' : ''}`);
+    const rows = [[7, 8, 9, 10], [4, 5, 6], [2, 3], [1]];
+    const up = new Set(leave.pins);
+    card.innerHTML = `<div class="lc-pins">${rows.map((r) => `<div>${r.map((n) => `<i class="${up.has(n) ? 'up' : ''}" style="--k:${n}">${n}</i>`).join('')}</div>`).join('')}</div>
+      <b>${leave.name}</b><span>${leave.caption}</span>`;
+    this.leaveCard = card;
+    window.setTimeout(() => {
+      card.classList.add('out');
+      window.setTimeout(() => card.remove(), 400);
+    }, 2500);
+  }
+
+  private updateLeaveGag(dt: number): void {
+    const g = this.gag;
+    if (!g) return;
+    if (this.phase !== 'result') {
+      this.gag = null;
+      return;
+    }
+    g.t += dt;
+    const t = g.t;
+    const env = Math.min(1, t * 3) * Math.min(1, Math.max(0, 2.6 - t) * 2); // ease in/out
+    if (env <= 0) return;
+    const cx = g.pins.reduce((a, p) => a + p.home.x, 0) / g.pins.length;
+    g.pins.forEach((pin, k) => {
+      const m = pin.mesh;
+      const side = Math.sign(pin.home.x - cx) || (k % 2 ? 1 : -1);
+      let tilt = 0;
+      let hop = 0;
+      let spin = 0;
+      switch (g.leave.gag) {
+        case 'shiver': // lonely pin trembling, then a nervous hop
+          tilt = Math.sin(t * 70) * 0.05;
+          hop = Math.max(0, Math.sin(t * 5)) * 0.05;
+          break;
+        case 'wave': // split groups lean away and wave across the gap
+          tilt = side * (0.12 + Math.sin(t * 9 + k) * 0.12);
+          hop = Math.max(0, Math.sin(t * 4.5 + side)) * 0.04;
+          break;
+        case 'highfive': // buddies lean in and bump heads
+          tilt = -side * Math.max(0, Math.sin(t * 5)) * 0.3;
+          hop = Math.max(0, Math.sin(t * 5)) * 0.03;
+          break;
+        case 'huddle': // swaying together
+          tilt = Math.sin(t * 6) * 0.14;
+          hop = Math.max(0, Math.sin(t * 12 + k * 0.6)) * 0.03;
+          break;
+        case 'stripe': // a hop running down the line
+          hop = Math.max(0, Math.sin(t * 8 - k * 1.1)) * 0.09;
+          tilt = Math.sin(t * 8 - k * 1.1) * 0.06;
+          break;
+        case 'taunt': // smug bouncing and twirling
+          hop = Math.abs(Math.sin(t * 7 + k)) * 0.07;
+          spin = t * 6 * (k % 2 ? 1 : -1);
+          break;
+        case 'gossip': // leaning toward a neighbour, whispering
+          tilt = Math.sin(t * 3 + k * 1.7) * 0.18;
+          break;
+      }
+      m.position.y += hop * env;
+      m.rotateZ(tilt * env);
+      if (spin) m.rotateY(spin * env);
+    });
+  }
+
+  private skinIndex(): number {
+    return Math.max(0, this.heldSkin ? this.skins.indexOf(this.heldSkin) : 0);
+  }
+
+  /**
+   * Line-up preview during setup; then the bowler on the approach and everyone else free to
+   * roam the area behind it (you steer your own bean online; offline beans wander on their own).
+   * Whoever's up next gets yanked onto the approach with a stretchy hop.
+   */
+  private placePlayers(dt = 0): void {
+    const t = performance.now() / 1000;
     this.players.forEach((p, i) => {
       const r = p.char.root;
       r.visible = true;
@@ -328,18 +497,144 @@ export class Bowling implements Minigame {
         const n = this.players.length;
         r.position.set((i - (n - 1) / 2) * 0.55, 0, BOWLER_Z);
         r.rotation.y = Math.PI; // face the camera
+        r.scale.setScalar(CHAR_SCALE);
+        p.roam = undefined;
         if (p.char.state === 'sit') p.char.setState('idle');
-      } else if (i === this.cur) {
-        r.position.set(this.posX + HAND_OFFSET, 0, BOWLER_Z);
-        r.rotation.y = Math.PI;
-      } else {
-        r.position.copy(p.seat);
-        // hide bench sitters the camera is sweeping right past (no floating heads mid-flight)
-        r.visible = this.camera.position.distanceTo(r.position) > 1.2;
-        r.rotation.y = Math.PI;
-        if (p.react <= 0 && p.char.state !== 'sit') p.char.setState('sit');
+        return;
       }
+      if (i === this.cur) {
+        const spot = this.tmp.set(this.posX + HAND_OFFSET, 0, BOWLER_Z);
+        if (p.pull && p.pull.t < 1) {
+          p.pull.t = Math.min(1, p.pull.t + dt / 0.85);
+          const u = easeOut(p.pull.t);
+          r.position.lerpVectors(p.pull.from, spot, u);
+          r.position.y = Math.sin(p.pull.t * Math.PI) * 0.7;
+          // stretched like jelly while flying, squashed on landing
+          const s = Math.sin(p.pull.t * Math.PI);
+          const land = p.pull.t > 0.85 ? Math.sin(((p.pull.t - 0.85) / 0.15) * Math.PI) * 0.25 : 0;
+          r.scale.set(CHAR_SCALE * (1 - s * 0.25 + land), CHAR_SCALE * (1 + s * 0.45 - land), CHAR_SCALE * (1 - s * 0.25 + land));
+          r.rotation.y = Math.PI + Math.sin(p.pull.t * Math.PI * 2) * 0.6;
+          if (p.pull.t >= 1) {
+            p.char.kick(0.5);
+            this.ctx.sfx.boing();
+          }
+        } else {
+          r.position.copy(spot);
+          r.rotation.y = Math.PI;
+          r.scale.setScalar(CHAR_SCALE);
+        }
+        p.roam = undefined;
+        return;
+      }
+      r.scale.setScalar(CHAR_SCALE);
+      this.roamStep(p, i, dt, t);
+      r.position.set(p.roam!.x, p.roam!.y + (p.roam!.bob ?? 0), p.roam!.z);
+      r.rotation.y = p.roam!.ry;
+      // hide beans the camera is sweeping right past (no floating heads mid-flight)
+      r.visible = this.camera.position.distanceTo(r.position) > 1.2;
     });
+    // beans gently push each other apart
+    for (let a = 0; a < this.players.length; a++) {
+      for (let b = a + 1; b < this.players.length; b++) {
+        const ra = this.players[a].roam;
+        const rb = this.players[b].roam;
+        if (!ra || !rb) continue;
+        const dx = rb.x - ra.x;
+        const dz = rb.z - ra.z;
+        const d = Math.hypot(dx, dz);
+        if (d > 0.001 && d < 0.32) {
+          const push = (0.32 - d) * 0.5;
+          if (this.players[a].ai || a === this.myIndex) { ra.x -= (dx / d) * push; ra.z -= (dz / d) * push; }
+          if (this.players[b].ai || b === this.myIndex) { rb.x += (dx / d) * push; rb.z += (dz / d) * push; }
+        }
+      }
+    }
+  }
+
+  /** Move one non-bowling bean: keyboard (my bean online), network (others online) or bench AI (offline). */
+  private roamStep(p: Player, i: number, dt: number, t: number): void {
+    const from = p.char.root.position;
+    if (!p.roam) p.roam = { x: from.x, z: from.z, ry: Math.PI, y: from.y, vy: 0 };
+    const s = p.roam;
+    let moving = false;
+    if (this.online && i === this.myIndex) {
+      const k = this.ctx.input.keys;
+      const mx = (k.has('KeyD') || k.has('ArrowRight') ? 1 : 0) - (k.has('KeyA') || k.has('ArrowLeft') ? 1 : 0);
+      const mz = (k.has('KeyS') || k.has('ArrowDown') ? 1 : 0) - (k.has('KeyW') || k.has('ArrowUp') ? 1 : 0);
+      if (mx || mz) {
+        const len = Math.hypot(mx, mz);
+        s.x += (mx / len) * 1.6 * dt;
+        s.z += (mz / len) * 1.6 * dt;
+        s.ry = Math.atan2(mx, mz);
+        moving = true;
+      }
+      if (this.ctx.input.wasPressed('Space') && s.y <= 0.001) {
+        s.vy = 3.2;
+        p.char.kick(0.4);
+        this.ctx.sfx.boing();
+      }
+    } else if (this.online) {
+      const n = p.netRoam;
+      if (n) {
+        const k = 1 - Math.exp(-dt * 12);
+        moving = Math.hypot(n.x - s.x, n.z - s.z) > 0.01;
+        s.x += (n.x - s.x) * k;
+        s.z += (n.z - s.z) * k;
+        s.y = n.y;
+        s.ry = n.ry;
+      }
+    } else {
+      // offline bench AI: sit on the candy bench, get up, wander, hop about
+      p.ai ??= { mode: 'walk', timer: 0, tx: p.seat.x, tz: p.seat.z };
+      const ai = p.ai;
+      ai.timer -= dt;
+      if (ai.timer <= 0) {
+        const sit = ai.mode === 'walk' && Math.random() < 0.55;
+        ai.mode = sit ? 'sit' : 'walk';
+        ai.timer = sit ? 4 + Math.random() * 5 : 2.5 + Math.random() * 3;
+        if (sit) {
+          ai.tx = p.seat.x;
+          ai.tz = p.seat.z;
+        } else {
+          ai.tx = (Math.random() - 0.5) * 3.6;
+          ai.tz = BOWLER_Z + 0.8 + Math.random() * 2.2;
+        }
+      }
+      const dx = ai.tx - s.x;
+      const dz = ai.tz - s.z;
+      const d = Math.hypot(dx, dz);
+      if (d > 0.05) {
+        const step = Math.min(d, 1.1 * dt);
+        s.x += (dx / d) * step;
+        s.z += (dz / d) * step;
+        s.ry = Math.atan2(dx, dz);
+        moving = true;
+      } else if (ai.mode === 'sit') {
+        s.ry = Math.PI;
+      }
+      if (ai.mode === 'walk' && s.y <= 0.001 && Math.random() < dt * 0.35) {
+        s.vy = 2.4 + Math.random();
+        p.char.kick(0.3);
+      }
+    }
+    // gravity + hop
+    if (!this.online || i === this.myIndex) {
+      s.vy -= 9.8 * dt;
+      s.y = Math.max(0, s.y + s.vy * dt);
+      if (s.y === 0 && s.vy < 0) {
+        if (s.vy < -2) p.char.kick(0.25);
+        s.vy = 0;
+      }
+      // stay off the lane approach and inside the hall
+      s.x = clamp(s.x, -2.1, 2.1);
+      s.z = clamp(s.z, BOWLER_Z + 0.45, 3.7);
+    }
+    // pose: seated on the bench, otherwise a bouncy walk
+    const atSeat = Math.hypot(s.x - p.seat.x, s.z - p.seat.z) < 0.08 && s.y === 0;
+    s.bob = moving && s.y === 0 ? Math.abs(Math.sin(t * 11 + i)) * 0.035 : 0;
+    if (p.react > 0) return;
+    const want: CharStateName = atSeat && !moving ? 'sit' : 'idle';
+    if (p.char.state !== want) p.char.setState(want);
   }
 
   // ---------------------------------------------------------------- input
@@ -462,6 +757,13 @@ export class Bowling implements Minigame {
     this.aim = 0;
     this.spin = 0;
     this.phase = 'aiming'; // so placePlayers puts the bowler on the approach
+    // yank the next bowler out of the crowd onto the approach
+    p.pull = { from: p.char.root.position.clone(), t: p.char.root.position.distanceTo(this.tmp.set(HAND_OFFSET, 0, BOWLER_Z)) > 0.2 ? 0 : 1 };
+    p.ai = undefined;
+    if (p.pull.t === 0) {
+      this.ctx.sfx.tone(520, 0.18, 'sine', 0.2);
+      p.char.setState('windup');
+    }
     this.placePlayers();
     p.char.setState('idle');
     p.char.kick(0.35);
@@ -479,7 +781,7 @@ export class Bowling implements Minigame {
       for (const p of this.pins) if (p.active) act |= 1 << p.idx;
       this.ctx.net.send({
         t: 'throw', seat: this.ctx.net.mySeat, x: this.posX, aim: t.aim, power: t.power, spin: t.spin,
-        skin: 0, sb: this.pins.filter((p) => p.active).length, act,
+        skin: this.skinIndex(), sb: this.pins.filter((p) => p.active).length, act, pid: this.myPid,
       });
     }
     if (!remote) this.remoteMask = null; // a lagging spectator may already hold this roll's result
@@ -517,7 +819,28 @@ export class Bowling implements Minigame {
       this.aimSendT -= dt;
       if (this.myTurn && (this.phase === 'aiming' || this.phase === 'charging') && this.aimSendT <= 0) {
         this.aimSendT = 0.1;
-        this.ctx.net.send({ t: 'aim', seat: this.ctx.net.mySeat, x: this.posX, aim: this.aim, spin: this.spin, skin: 0 });
+        this.ctx.net.send({ t: 'aim', seat: this.ctx.net.mySeat, x: this.posX, aim: this.aim, spin: this.spin, skin: this.skinIndex(), pid: this.myPid });
+      }
+      // stream my roaming bean while someone else bowls
+      this.roamSendT -= dt;
+      const me = this.players[this.myIndex];
+      if (me && !this.myTurn && this.roamSendT <= 0) {
+        this.roamSendT = 0.1;
+        this.sendRoam();
+      }
+      // host: a peer silent for 12 s has vanished (closed tab, lost wifi) — drop them
+      const now = performance.now();
+      if (this.ctx.net.isHost) {
+        for (const pid of [...this.pids]) {
+          if (pid === this.myPid) continue;
+          const seen = this.lastHeard.get(pid) ?? (this.lastHeard.set(pid, now), now);
+          if (now - seen > 12_000) {
+            const p = this.players[this.pids.indexOf(pid)];
+            this.lastHeard.delete(pid);
+            this.ctx.net.send({ t: 'remove', seat: this.pids.indexOf(pid), name: p.name, restartTurn: false, endGame: false, pid });
+            this.removePlayer(pid, p.name);
+          }
+        }
       }
     }
 
@@ -554,7 +877,8 @@ export class Bowling implements Minigame {
       const allQuiet = this.pins.every((pin) => !pin.active || pin.body.isSleeping() || isPinDown(pin) || linSpeed(pin.body) < 0.03);
       const settled = (allQuiet && this.phaseTime > 1.0) || this.phaseTime > 3.5;
       // spectators wait for the bowler's authoritative pin count (local physics as a fallback)
-      const waiting = this.online && !this.myTurn && this.remoteMask === null && this.phaseTime < 10;
+      // (no short timeout: a slow bowler's screen must never be out-voted; leavers are removed instead)
+      const waiting = this.online && !this.myTurn && this.remoteMask === null && this.phaseTime < 90;
       if (settled && !waiting) this.finishRoll();
     } else if (this.phase === 'result') {
       if (this.phaseTime > 2.7) this.nextBall();
@@ -662,7 +986,7 @@ export class Bowling implements Minigame {
     if (this.online && this.myTurn) {
       let m = 0;
       for (const pin of this.pins) if (pin.counted) m |= 1 << pin.idx;
-      this.ctx.net.send({ t: 'roll', seat: this.ctx.net.mySeat, mask: m });
+      this.ctx.net.send({ t: 'roll', seat: this.ctx.net.mySeat, mask: m, pid: this.myPid });
     }
     knocked = Math.min(knocked, this.standingBefore);
     this.lastKnocked = knocked;
@@ -673,6 +997,7 @@ export class Bowling implements Minigame {
     const cleared = knocked === this.standingBefore;
     const strike = cleared && statusBefore.freshRack;
     const kind = this.classify(knocked, cleared, strike, statusBefore.freshRack, p.rolls);
+    if (statusBefore.freshRack && !cleared && knocked > 0) this.startLeaveGag(this.pins.filter((pin) => pin.active && !pin.counted));
     const { sfx, hud } = this.ctx;
     const deckFx = new THREE.Vector3(0, 0.5, HEAD_PIN_Z - 0.3);
     const at = new THREE.Vector3(this.posX + HAND_OFFSET, 0, BOWLER_Z);
@@ -827,7 +1152,8 @@ export class Bowling implements Minigame {
       if (p.react > 0) p.react -= dt;
       p.char.update(dt);
     }
-    this.placePlayers();
+    this.placePlayers(dt);
+    this.updateLeaveGag(dt);
     this.confetti.update(dt);
     this.hub.update(dt);
     this.arena.update(dt);
