@@ -94,6 +94,7 @@ export class Peak implements Minigame {
   private simT = 0;
   private camReach = 6;
   private camLift = 0;
+  private camLocked = false;
   private launched = false;
   private scenery!: { update(dt: number): void };
   private boostQueued = false;
@@ -235,7 +236,7 @@ export class Peak implements Minigame {
   }
 
   private countdown(): void {
-    this.hint('Reach the flag! W/S walk · A/D steer · SPACE jump (hold = higher) · SHIFT on a wall to climb · pink domes bounce · hoops refill · E boost a buddy', 10);
+    this.hint('Reach the flag! W/S walk · A/D steer · drag or Q/F to look (C locks it) · SPACE jump (hold = higher) · SHIFT on a wall to climb · pink domes bounce · hoops refill · E boost a buddy', 10);
     let n = 3;
     const tick = () => {
       if (n > 0) {
@@ -262,7 +263,7 @@ export class Peak implements Minigame {
         }
         const p = s[s.length - 1];
         if (this.dragLast) {
-          this.lookYaw = clamp(this.lookYaw - (p.x - this.dragLast.x) * 0.006, -2.6, 2.6);
+          this.lookYaw -= (p.x - this.dragLast.x) * 0.006; // full 360° orbit
           this.pitch = clamp(this.pitch + (p.y - this.dragLast.y) * 0.004, 0.08, 1.1);
         }
         this.dragLast = { x: p.x, y: p.y };
@@ -664,7 +665,17 @@ export class Peak implements Minigame {
 
   private updateCamera(dt: number): void {
     // ride behind the climber; look-around drag eases back when you let go
-    if (!this.dragLast) this.lookYaw *= Math.exp(-dt * 2.5);
+    // Q/F orbit; the view only drifts back behind you while you walk (unless C locked it)
+    const kk = this.ctx.input.keys;
+    if (kk.has("KeyQ")) this.lookYaw += dt * 2.2;
+    if (kk.has("KeyF")) this.lookYaw -= dt * 2.2;
+    if (this.ctx.input.wasPressed("KeyC")) {
+      this.camLocked = !this.camLocked;
+      this.hint(this.camLocked ? "Free camera: drag or Q/F to look, it stays put (C to unlock)" : "Follow camera: swings back behind you as you walk (C for free camera)", 3);
+    }
+    this.lookYaw = Math.atan2(Math.sin(this.lookYaw), Math.cos(this.lookYaw)); // keep it the short way round
+    const walking = Math.hypot(this.vel.x, this.vel.z) > 0.6 || this.climbing;
+    if (!this.dragLast && !this.camLocked && walking && !kk.has("KeyQ") && !kk.has("KeyF")) this.lookYaw *= Math.exp(-dt * 1.6);
     const behind = this.facing + Math.PI + this.lookYaw;
     this.yaw = lerpAngle(this.yaw, behind, 1 - Math.exp(-dt * (this.climbing ? 4 : 7)));
     const p = this.me.char.root.position;
