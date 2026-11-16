@@ -15,6 +15,8 @@ import {
 import { frameMarks, gameStatus, provisionalScore, scoreGame } from './scoring.ts';
 import { Reactions } from './reactions.ts';
 import { makeCandyBench, GUTTER_W, PIN_SPACING, type Arena, type Reaction } from './world.ts';
+import type { NetMsg, ThrowMsg } from '../../net/protocol.ts';
+import type { SessionEvent } from '../../net/session.ts';
 import { BallHub, makeBallMesh, randomSkins, setBallSkin, useBallModel, type BallSkin } from './balls.ts';
 
 export const BOWLING_ASSETS = ['keatura-bowling.glb'];
@@ -220,7 +222,79 @@ export class Bowling implements Minigame {
     this.bindInput();
     this.resetRack(true);
     this.exposeDebug();
-    this.showSetup();
+    const net = ctx.net;
+    if (net.active && net.players.length > 0) {
+      // Online party: line-up = room seat order, no local setup screen.
+      this.online = true;
+      this.myIndex = net.players.findIndex((p) => p.seat === net.mySeat);
+      this.unsub.push(net.on((ev) => this.onNet(ev)));
+      this.startGame(net.players.map((p) => ({ name: p.name, species: p.species as Species, color: p.color })));
+    } else this.showSetup();
+  }
+
+  // ---------------------------------------------------------------- online
+  private online = false;
+  private myIndex = -1;
+  private pendingThrow: ThrowMsg | null = null;
+  private remoteMask: number | null = null;
+  private aimSendT = 0;
+
+  /** Offline: always. Online: only when the current bowler is me. */
+  private get myTurn(): boolean {
+    return !this.online || this.cur === this.myIndex;
+  }
+
+  private seatOf(index: number): number {
+    return this.ctx.net.players[index]?.seat ?? index;
+  }
+
+  private onNet(ev: SessionEvent): void {
+    if (ev.e === 'host-lost') {
+      this.ctx.hud.banner('Party ended', 1800, '#b9a3ff');
+      this.online = false;
+      this.ctx.exitToHub();
+      return;
+    }
+    if (ev.e !== 'msg') return;
+    const m: NetMsg = ev.m;
+    const bowlerSeat = this.seatOf(this.cur);
+    switch (m.t) {
+      case 'throw':
+        if (m.seat !== this.ctx.net.mySeat) this.pendingThrow = m;
+        break;
+      case 'roll':
+        if (m.seat !== this.ctx.net.mySeat) this.remoteMask = m.mask;
+        break;
+      case 'aim':
+        if (m.seat === bowlerSeat && !this.myTurn && this.phase === 'aiming') {
+          this.posX = m.x;
+          this.aim = m.aim;
+          this.spin = m.spin;
+        }
+        break;
+      case 'continue':
+        if (this.phase === 'board') this.continueFromBoard();
+        break;
+    }
+  }
+
+  /** Replay a peer's throw once our flow has reached their aiming phase. */
+  private applyPendingThrow(): void {
+    const t = this.pendingThrow;
+    if (!t || this.phase !== 'aiming' || this.myTurn) return;
+    if (t.seat !== this.seatOf(this.cur)) return;
+    this.pendingThrow = null;
+    // reconcile which pins are in play with the thrower's view
+    for (const pin of this.pins) {
+      const want = (t.act & (1 << pin.idx)) !== 0;
+      if (pin.active !== want) {
+        pin.active = want;
+        pin.body.setEnabled(want);
+        pin.mesh.visible = want;
+      }
+    }
+    this.posX = t.x;
+    this.throwBall({ aim: t.aim, power: t.power, spin: t.spin }, true);
   }
 
   private get bowler(): Player {
@@ -274,7 +348,7 @@ export class Bowling implements Minigame {
     this.unsub.push(
       input.onDrag((s) => {
         sfx.unlock();
-        if (this.phase !== 'aiming' || s.length === 0) {
+        if (this.phase !== 'aiming' || s.length === 0 || !this.myTurn) {
           this.dragWindup = false;
           return;
         }
@@ -283,7 +357,7 @@ export class Bowling implements Minigame {
         this.bowler.char.setState(this.dragWindup ? 'windup' : 'aim');
       }),
       input.onFlick((f) => {
-        if (this.phase !== 'aiming') return;
+        if (this.phase !== 'aiming' || !this.myTurn) return;
         this.dragWindup = false;
         if (f.vy > -250) {
           this.bowler.char.setState('idle');
@@ -301,7 +375,7 @@ export class Bowling implements Minigame {
     const { input } = this.ctx;
     const k = input.keys;
     this.peek = k.has('Tab');
-    if (this.phase === 'aiming' || this.phase === 'charging') {
+    if ((this.phase === 'aiming' || this.phase === 'charging') && this.myTurn) {
       if (k.has('ArrowLeft')) this.posX -= dt * 0.6;
       if (k.has('ArrowRight')) this.posX += dt * 0.6;
       if (k.has('KeyA')) this.aim -= dt * 0.08;
@@ -311,7 +385,7 @@ export class Bowling implements Minigame {
       if (input.wasPressed('KeyQ')) this.spin = clamp(this.spin - 0.25, -1, 1);
       if (input.wasPressed('KeyE')) this.spin = clamp(this.spin + 0.25, -1, 1);
     }
-    if (this.phase === 'aiming' && input.wasPressed('Space')) {
+    if (this.phase === 'aiming' && this.myTurn && input.wasPressed('Space')) {
       this.ctx.sfx.unlock();
       this.setPhase('charging');
     }
@@ -321,8 +395,15 @@ export class Bowling implements Minigame {
     if (input.wasPressed('Escape') && this.phase !== 'setup') this.togglePause();
     if (this.paused) return;
     if (input.wasPressed('Enter')) {
-      if (this.phase === 'board') this.continueFromBoard();
-      else if (this.phase === 'over') this.ctx.requestRestart();
+      if (this.phase === 'board') {
+        if (!this.online || this.ctx.net.isHost) {
+          if (this.online) this.ctx.net.send({ t: 'continue' });
+          this.continueFromBoard();
+        }
+      } else if (this.phase === 'over') {
+        if (this.online) this.ctx.exitToHub();
+        else this.ctx.requestRestart();
+      }
       else if (this.phase === 'setup') this.startGame();
     }
   }
@@ -337,7 +418,8 @@ export class Bowling implements Minigame {
     if (p === 'aiming') {
       if (!this.heldSkin) this.grabBall();
       this.bowler.char.setState('idle');
-      this.hint(`${this.bowler.name}: flick up to bowl · drag down to wind up · ←/→ move · A/D aim · Q/E spin · or hold SPACE`);
+      if (!this.myTurn) this.hint(`Waiting for ${this.bowler.name} to bowl… 🎳`);
+      else this.hint(`${this.bowler.name}: flick up to bowl · drag down to wind up · ←/→ move · A/D aim · Q/E spin · or hold SPACE`);
     }
     if (p === 'charging') this.bowler.char.setState('windup');
   }
@@ -388,8 +470,19 @@ export class Bowling implements Minigame {
     this.setPhase('aiming');
   }
 
-  throwBall(t: ThrowParams): void {
+  throwBall(t: ThrowParams, remote = false): void {
     if (this.phase !== 'aiming' && this.phase !== 'charging') return;
+    if (!remote && !this.myTurn) return;
+    if (this.online && !remote) {
+      for (const p of this.pins) if (p.active && isPinDown(p)) p.active = false;
+      let act = 0;
+      for (const p of this.pins) if (p.active) act |= 1 << p.idx;
+      this.ctx.net.send({
+        t: 'throw', seat: this.ctx.net.mySeat, x: this.posX, aim: t.aim, power: t.power, spin: t.spin,
+        skin: 0, sb: this.pins.filter((p) => p.active).length, act,
+      });
+    }
+    if (!remote) this.remoteMask = null; // a lagging spectator may already hold this roll's result
     const speed = 4.5 + clamp(t.power, 0, 1) * 5.5;
     const aim = clamp(t.aim, -MAX_AIM * 1.5, MAX_AIM * 1.5);
     this.spin = clamp(t.spin, -1, 1);
@@ -416,8 +509,17 @@ export class Bowling implements Minigame {
   }
 
   fixedUpdate(dt: number): void {
-    if (this.paused) return;
+    if (this.paused && !this.online) return; // online play never freezes the shared lane
     this.phaseTime += dt;
+    if (this.online) {
+      this.applyPendingThrow();
+      // stream my aim so the others see me shuffle on the approach
+      this.aimSendT -= dt;
+      if (this.myTurn && (this.phase === 'aiming' || this.phase === 'charging') && this.aimSendT <= 0) {
+        this.aimSendT = 0.1;
+        this.ctx.net.send({ t: 'aim', seat: this.ctx.net.mySeat, x: this.posX, aim: this.aim, spin: this.spin, skin: 0 });
+      }
+    }
 
     if (this.phase === 'rolling') {
       const p = this.ball.translation();
@@ -450,7 +552,10 @@ export class Bowling implements Minigame {
       if (done) this.setPhase('settling');
     } else if (this.phase === 'settling') {
       const allQuiet = this.pins.every((pin) => !pin.active || pin.body.isSleeping() || isPinDown(pin) || linSpeed(pin.body) < 0.03);
-      if ((allQuiet && this.phaseTime > 1.0) || this.phaseTime > 3.5) this.finishRoll();
+      const settled = (allQuiet && this.phaseTime > 1.0) || this.phaseTime > 3.5;
+      // spectators wait for the bowler's authoritative pin count (local physics as a fallback)
+      const waiting = this.online && !this.myTurn && this.remoteMask === null && this.phaseTime < 10;
+      if (settled && !waiting) this.finishRoll();
     } else if (this.phase === 'result') {
       if (this.phaseTime > 2.7) this.nextBall();
     } else if (this.phase === 'board' && this.boardTimer > 0) {
@@ -548,9 +653,16 @@ export class Bowling implements Minigame {
   private finishRoll(): void {
     const p = this.bowler;
     let knocked = 0;
+    const mask = this.online && !this.myTurn ? this.remoteMask : null;
     for (const pin of this.pins) {
-      pin.counted = pin.active && isPinDown(pin);
+      pin.counted = pin.active && (mask !== null ? (mask & (1 << pin.idx)) !== 0 : isPinDown(pin));
       if (pin.counted) knocked++;
+    }
+    this.remoteMask = null;
+    if (this.online && this.myTurn) {
+      let m = 0;
+      for (const pin of this.pins) if (pin.counted) m |= 1 << pin.idx;
+      this.ctx.net.send({ t: 'roll', seat: this.ctx.net.mySeat, mask: m });
     }
     knocked = Math.min(knocked, this.standingBefore);
     this.lastKnocked = knocked;

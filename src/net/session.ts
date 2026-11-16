@@ -99,6 +99,7 @@ export class NetSession {
       this.setupPeer(peer, code, true);
       this.myPeerId = peer.id;
       this.players = [{ seat: 0, peerId: peer.id, ...profile }];
+      this.mySeat = 0;
       this.chat = [];
       this.gotLobby = true;
       this.voice = new VoiceLink(() => this.peer, () => [...this.conns.keys()]);
