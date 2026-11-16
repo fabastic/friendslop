@@ -14,6 +14,7 @@ import type { NetMsg } from '../../net/protocol.ts';
 import type { SessionEvent } from '../../net/session.ts';
 import { buildMountain, type Mountain, type Checkpoint } from './mountain.ts';
 import { buildScenery } from '../bowling/world.ts';
+import { attachInGameNet, type InGameNet } from '../../net/ingame.ts';
 import { TouchControls } from './touch.ts';
 import './peak.css';
 
@@ -91,6 +92,7 @@ export class Peak implements Minigame {
   private coyote = 0;
   private jumpBuffer = 0;
   private jumpHeld = false;
+  private netUi: InGameNet = { update() {}, dispose() {} };
   private simT = 0;
   private camReach = 6;
   private camLift = 0;
@@ -180,6 +182,10 @@ export class Peak implements Minigame {
     this.bindInput();
     if (this.online) {
       this.unsub.push(net.on((ev) => this.onNet(ev)));
+      this.netUi = attachInGameNet(ctx, (pid) => {
+        const c = [this.me, ...this.others].find((x) => x.pid === pid);
+        return c ? c.char.root.position.clone().add(new THREE.Vector3(0, 1.3, 0)) : null;
+      });
       const hb = window.setInterval(() => this.sendState(), 1000);
       this.unsub.push(() => window.clearInterval(hb));
     }
@@ -200,6 +206,45 @@ export class Peak implements Minigame {
       m.userData.life = 0.6;
       this.scene.add(m);
       this.puffs.push(m);
+    }
+  }
+
+  // ---- readability: where you'll land, and where to go next
+  private landRing = (() => {
+    const m = new THREE.Mesh(new THREE.RingGeometry(0.16, 0.3, 24), new THREE.MeshBasicMaterial({ color: '#2a1b4a', transparent: true, opacity: 0.55, depthWrite: false }));
+    m.rotation.x = -Math.PI / 2;
+    m.renderOrder = 3;
+    m.userData.noInk = true;
+    return m;
+  })();
+  private nextArrow = (() => {
+    const m = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.42, 4), new THREE.MeshBasicMaterial({ color: '#ffd23f' }));
+    m.rotation.x = Math.PI; // point down at the platform
+    m.userData.noInk = true;
+    return m;
+  })();
+
+  private updateGuides(t: number): void {
+    if (!this.landRing.parent) this.scene.add(this.landRing, this.nextArrow);
+    // landing ring: straight down from the climber onto whatever is below
+    const from = { x: this.pos.x, y: this.pos.y + 0.2, z: this.pos.z };
+    const hit = this.world.castRay(new this.R.Ray(from, { x: 0, y: -1, z: 0 }), 40, true, undefined, undefined, this.collider, this.body);
+    const air = !this.grounded && !this.climbing && !!hit;
+    this.landRing.visible = air;
+    if (air && hit) {
+      const drop = hit.timeOfImpact;
+      this.landRing.position.set(this.pos.x, from.y - drop + 0.03, this.pos.z);
+      this.landRing.scale.setScalar(1 + Math.min(drop, 6) * 0.12);
+    }
+    // next platform above you on the route gets a bobbing arrow
+    const route = this.mountain.route;
+    let next = -1;
+    for (let i = 0; i < route.length; i++) if (route[i].y > this.pos.y + 0.35) { next = i; break; }
+    this.nextArrow.visible = next >= 0 && !this.finished;
+    if (next >= 0) {
+      const p = route[next];
+      this.nextArrow.position.set(p.x, p.y + 0.75 + Math.sin(t * 4) * 0.12, p.z);
+      this.nextArrow.rotation.y = t * 2;
     }
   }
 
@@ -653,7 +698,9 @@ export class Peak implements Minigame {
     this.scenery.update(dt);
     this.confetti.update(dt);
     this.updateDust(dt);
+    this.updateGuides(t);
     this.updateCamera(dt);
+    this.netUi.update(dt, this.camera);
     this.updateHud();
     this.ctx.input.endFrame();
   }
@@ -825,11 +872,20 @@ export class Peak implements Minigame {
       start: () => (this.started = true),
       summit: () => this.mountain.summit.toArray(),
       pads: () => this.mountain.pads.map((p) => p.pos.toArray()),
+      // turn to face a world point (bots aim before a jump)
+      face: (x: number, z: number) => {
+        this.heading = Math.atan2(x - this.pos.x, z - this.pos.z);
+        this.facing = this.heading;
+      },
+      route: () => this.mountain.route.map((p) => p.toArray().map((n) => +n.toFixed(2))),
+      // camera visibility: 1 = full arm length, lower = something pulled it in front of a blocker
+      view: () => ({ reach: +this.camReach.toFixed(2), lift: +this.camLift.toFixed(2), yaw: +this.yaw.toFixed(2) }),
       rafts: () => this.mountain.movers.map((m) => m.pos.toArray()),
     };
   }
 
   dispose(): void {
+    this.netUi.dispose();
     this.unsub.forEach((u) => u());
     this.unsub = [];
     this.ctx.hud.clear();

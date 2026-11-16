@@ -16,6 +16,7 @@ import { frameMarks, gameStatus, provisionalScore, scoreGame } from './scoring.t
 import { Reactions } from './reactions.ts';
 import { makeCandyBench, GUTTER_W, PIN_SPACING, type Arena, type Reaction } from './world.ts';
 import type { NetMsg, ThrowMsg } from '../../net/protocol.ts';
+import { attachInGameNet, type InGameNet } from '../../net/ingame.ts';
 import { classifyLeave, pinNumbers, type Leave } from './leaves.ts';
 import type { SessionEvent } from '../../net/session.ts';
 import { BallHub, makeBallMesh, randomSkins, setBallSkin, useBallModel, type BallSkin } from './balls.ts';
@@ -238,6 +239,10 @@ export class Bowling implements Minigame {
       this.online = true;
       this.pids = net.players.map((p) => p.peerId);
       this.unsub.push(net.on((ev) => this.onNet(ev)));
+      this.netUi = attachInGameNet(ctx, (pid) => {
+        const p = this.players[this.pids.indexOf(pid)];
+        return p ? p.char.root.position.clone().add(new THREE.Vector3(0, 0.95, 0)) : null;
+      });
       // heartbeat on a timer (not the render loop) so a backgrounded tab still counts as present
       const hb = window.setInterval(() => this.sendRoam(), 1000);
       this.unsub.push(() => window.clearInterval(hb));
@@ -254,6 +259,7 @@ export class Bowling implements Minigame {
   private aimSendT = 0;
   private roamSendT = 0;
   private lastHeard = new Map<string, number>();
+  private netUi: InGameNet = { update() {}, dispose() {} };
 
   private sendRoam(): void {
     const me = this.players[this.myIndex];
@@ -1184,6 +1190,7 @@ export class Bowling implements Minigame {
     if (this.phase === 'charging') this.meterFill.style.height = `${Math.round(this.power * 100)}%`;
 
     this.updateCamera(dt);
+    this.netUi.update(dt, this.camera);
     this.ctx.input.endFrame();
     const v = this.ball.isEnabled() ? this.ball.linvel() : { x: 0, y: 0, z: 0 };
     const bp = this.ball.translation();
@@ -1701,6 +1708,7 @@ export class Bowling implements Minigame {
   }
 
   dispose(): void {
+    this.netUi.dispose();
     this.unsub.forEach((u) => u());
     this.unsub = [];
     this.ctx.sfx.roll(0);

@@ -69,6 +69,8 @@ export interface Mountain {
   movers: Mover[];
   rings: Ring[];
   holds: Hold[];
+  /** standable tops along the spiral, bottom to top (for playtest bots) */
+  route: THREE.Vector3[];
   stepMovers(time: number): void;
   update(dt: number, t: number): void;
 }
@@ -216,6 +218,7 @@ export function buildMountain(R: typeof RAPIER, world: RAPIER.World, scene: THRE
   // ---- the tower
   const STEPS = 54;
   const items: { top: number; theta: number; r: number }[] = [];
+  const route: THREE.Vector3[] = [];
   const checkpoints: Checkpoint[] = [];
   const berries: Berry[] = [];
   const pads: Pad[] = [];
@@ -279,6 +282,7 @@ export function buildMountain(R: typeof RAPIER, world: RAPIER.World, scene: THRE
     collide(thing);
     const topPos = new THREE.Vector3(Math.sin(theta) * radial, top, Math.cos(theta) * radial);
     items.push({ top, theta, r: radial });
+    route.push(topPos.clone());
 
     if (kind === 'balloon') pads.push({ pos: topPos.clone(), r: 0.55, dome: thing, squish: 0 });
     if (rest) addCheckpoint(topPos.clone());
@@ -328,6 +332,87 @@ export function buildMountain(R: typeof RAPIER, world: RAPIER.World, scene: THRE
   flag.position.set(0.55, summit.y + 2, 0);
   scene.add(pole, flag);
 
+  // ---- fixed play bounds: candy fence on the meadow + invisible walls all the way up
+  const BOUND = 30;
+  const SEGS = 32;
+  const wallH = summit.y + 30;
+  const postMat = toon('#ffffff', {}, 0.3);
+  const railMat = toon('#ff6fae', {}, 0.3);
+  for (let i = 0; i < SEGS; i++) {
+    const a = (i / SEGS) * Math.PI * 2;
+    const half = BOUND * Math.sin(Math.PI / SEGS) + 0.05;
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, a, 0));
+    world.createCollider(
+      R.ColliderDesc.cuboid(half, wallH / 2, 0.3).setTranslation(Math.sin(a) * (BOUND + 0.3), wallH / 2, Math.cos(a) * (BOUND + 0.3)).setRotation(q),
+      statics,
+    );
+    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.14, 1.1, 8), postMat);
+    post.position.set(Math.sin(a) * BOUND, 0.55, Math.cos(a) * BOUND);
+    post.castShadow = true;
+    scene.add(post);
+  }
+  const rail = new THREE.Mesh(new THREE.TorusGeometry(BOUND, 0.07, 6, 128), railMat);
+  rail.rotation.x = Math.PI / 2;
+  rail.position.y = 0.85;
+  scene.add(rail);
+
+  // ---- background: a wide candy-land beyond the fence (visual only)
+  const far = new THREE.Mesh(new THREE.CircleGeometry(170, 64), toon('#b6efa9', {}, 0.2));
+  far.rotation.x = -Math.PI / 2;
+  far.position.y = -0.02;
+  far.receiveShadow = true;
+  far.userData.noInk = true;
+  scene.add(far);
+  const bgShape = (r: number): THREE.Mesh => {
+    const mat = toon(pick(SCENE_PALETTE), {}, 0.45);
+    const k = Math.floor(rnd() * 8);
+    const geo = k === 0 ? new THREE.SphereGeometry(r, 20, 14)
+      : k === 1 ? new THREE.TorusGeometry(r * 0.75, r * 0.28, 10, 24)
+      : k === 2 ? new THREE.CylinderGeometry(r * 0.7, r * 0.8, r * 2.4, 20)
+      : k === 3 ? new RoundedBoxGeometry(r * 1.5, r * 1.5, r * 1.5, 2, r * 0.25)
+      : k === 4 ? new THREE.ConeGeometry(r * 0.8, r * 2.2, 18)
+      : k === 5 ? starGeometry(r, r * 0.45)
+      : k === 6 ? new THREE.TorusGeometry(r, r * 0.22, 10, 24, Math.PI)
+      : new THREE.TorusKnotGeometry(r * 0.55, r * 0.17, 64, 10);
+    const m = new THREE.Mesh(geo, mat);
+    m.castShadow = false;
+    return m;
+  };
+  for (let i = 0; i < 70; i++) {
+    const a = rnd() * Math.PI * 2;
+    const d = range(38, 95);
+    const r = range(1.5, 3.5) * (d / 45);
+    const m = bgShape(r);
+    const floatUp = rnd() < 0.4;
+    m.position.set(Math.sin(a) * d, floatUp ? range(6, summit.y + 10) : r * 0.9, Math.cos(a) * d);
+    m.rotation.set(floatUp ? rnd() * 3 : 0, rnd() * Math.PI * 2, floatUp ? rnd() * 3 : 0);
+    scene.add(m);
+    if (floatUp) {
+      bobbers.push({ o: m, base: m.position.y, ph: rnd() * 6 });
+      spinners.push(m);
+    }
+  }
+  // clouds at every height so the climb always has sky dressing around it
+  const cloudMat = toon('#ffffff', {}, 0.15);
+  for (let i = 0; i < 46; i++) {
+    const c = new THREE.Group();
+    const n = 4 + Math.floor(rnd() * 4);
+    for (let k = 0; k < n; k++) {
+      const p = new THREE.Mesh(new THREE.SphereGeometry(range(0.9, 1.8), 14, 10), cloudMat);
+      p.position.set((k - n / 2) * 1.3, rnd() * 0.5, (rnd() - 0.5) * 1.4);
+      p.scale.y = 0.65;
+      p.userData.noInk = true;
+      c.add(p);
+    }
+    const a = rnd() * Math.PI * 2;
+    const d = range(16, 70); // never inside the climb (tower + pile is within ~6 m)
+    c.position.set(Math.sin(a) * d, range(3, summit.y + 18), Math.cos(a) * d);
+    c.scale.setScalar(range(0.7, 1.6));
+    c.lookAt(0, c.position.y, 0);
+    scene.add(c);
+    bobbers.push({ o: c, base: c.position.y, ph: rnd() * 6 });
+  }
+
   const clearR = TOWER_R + 5;
 
   return {
@@ -341,6 +426,7 @@ export function buildMountain(R: typeof RAPIER, world: RAPIER.World, scene: THRE
     movers: [],
     rings,
     holds,
+    route,
     stepMovers() {
       /* nothing moves on this layout */
     },

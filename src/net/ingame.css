@@ -1,0 +1,29 @@
+/* ================= in-match online bar: room code, chat, emotes, mic ================= */
+.net-hud { position: fixed; right: 14px; bottom: 14px; z-index: 25; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; pointer-events: none; font-family: 'Fredoka', system-ui, sans-serif; color: var(--ink); }
+.net-bar { display: flex; gap: 6px; pointer-events: auto; }
+.net-chip { font: inherit; font-weight: 700; font-size: 15px; min-width: 40px; height: 40px; padding: 0 12px; border: 3px solid var(--ink); border-radius: 999px; background: var(--white); color: var(--ink); box-shadow: 0 3px 0 var(--ink); cursor: pointer; transition: transform .12s; }
+.net-chip:hover { transform: translateY(-2px); }
+.net-chip:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink); }
+.net-chip.room { background: #fff3c4; letter-spacing: 1px; }
+.net-chip.on { background: var(--pink); color: #fff; animation: netPulse 1.2s ease-in-out infinite; }
+@keyframes netPulse { 50% { box-shadow: 0 3px 0 var(--ink), 0 0 0 6px rgba(255, 95, 162, .3); } }
+
+.emote-pop { display: none; grid-template-columns: repeat(4, 44px); gap: 6px; padding: 8px; background: var(--white); border: 3px solid var(--ink); border-radius: 18px; box-shadow: 0 4px 0 var(--ink); pointer-events: auto; transform-origin: bottom right; }
+.emote-pop.show { display: grid; animation: netPop .3s cubic-bezier(.3, 1.6, .5, 1) both; }
+.emote-btn { font-size: 24px; width: 44px; height: 44px; border: 0; border-radius: 12px; background: transparent; cursor: pointer; transition: transform .12s, background .12s; }
+.emote-btn:hover { background: #f4f0fb; transform: scale(1.18) rotate(-6deg); }
+@keyframes netPop { from { transform: scale(.6); opacity: 0; } }
+
+.chat { width: min(300px, calc(100vw - 28px)); display: flex; flex-direction: column; gap: 6px; pointer-events: none; }
+.chat-feed { display: flex; flex-direction: column; gap: 4px; max-height: 150px; overflow-y: auto; }
+.chat-line { align-self: flex-end; max-width: 100%; padding: 4px 10px; border-radius: 12px; background: rgba(255, 250, 242, .92); border: 2px solid var(--pc, var(--ink)); font-size: 13px; overflow-wrap: anywhere; animation: netPop .25s both; }
+.chat-line b { margin-right: 6px; color: var(--pc, var(--ink)); }
+.chat-row { display: none; gap: 6px; pointer-events: auto; }
+.chat.open .chat-row { display: flex; }
+.chat.open .chat-feed { pointer-events: auto; }
+.chat-input { flex: 1; min-width: 0; font: inherit; padding: 7px 10px; border: 3px solid var(--ink); border-radius: 12px; background: #fff; color: var(--ink); }
+.chat-send { font: inherit; font-weight: 700; padding: 0 12px; border: 3px solid var(--ink); border-radius: 12px; background: var(--yellow); color: var(--ink); cursor: pointer; }
+
+.float-emote { position: fixed; left: 0; top: 0; z-index: 24; font-size: 38px; pointer-events: none; filter: drop-shadow(0 3px 0 rgba(42, 27, 74, .35)); will-change: transform, opacity; }
+
+@media (pointer: coarse) { .net-hud { bottom: auto; top: 70px; } }
