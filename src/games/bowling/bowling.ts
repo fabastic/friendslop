@@ -1654,7 +1654,6 @@ export class Bowling implements Minigame {
       <li><b>Bowling Ball and Bowling Pin</b> by keatura · CC BY 4.0</li>
       <li>JellyFolk astronauts inspired by <b>Low-Poly JellyCat</b> by romensf (CC BY 4.0)</li>
       <li><b>Bench</b> by Tombolaso · CC BY-NC 4.0</li>
-      <li>Jelly Peak props: <b>Magical Find</b> by Ergoni · <b>Froggie Pie!! by Lemonscribs</b> by wilemben · <b>Pawtisserie</b> by CuteLeaf · all CC BY 4.0</li>
       <li>All models via Sketchfab · rendering three.js · physics Rapier</li>
       <li>All 24 JellyFolk, the Jelly Lift, the ball console and Pinbot are original to Jelly Bowl</li></ul>`;
     const btn = this.ctx.hud.el('button', 'btn', card);

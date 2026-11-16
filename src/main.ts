@@ -6,7 +6,7 @@ import { Sfx } from './core/audio.ts';
 import { registerGame, registry, type GameContext, type Minigame } from './core/minigame.ts';
 import { Bowling, BOWLING_ASSETS, presetLineup } from './games/bowling/bowling.ts';
 import { Hub } from './hub/hub.ts';
-import { Peak, setPeakSeed, PEAK_ASSETS } from './games/peak/peak.ts';
+import { Peak, setPeakSeed } from './games/peak/peak.ts';
 import { preloadAssets } from './core/assets.ts';
 import { NetSession } from './net/session.ts';
 
@@ -57,9 +57,7 @@ async function boot(): Promise<void> {
     play: (id, lineup, seed) => {
       setPeakSeed(seed);
       presetLineup(lineup);
-      // big props load on demand so the first page load stays light
-      if (id === "peak") void preloadAssets(PEAK_ASSETS).then(() => load(id));
-      else load(id);
+      load(id);
     },
   });
 
